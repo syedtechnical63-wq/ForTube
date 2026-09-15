@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>ForTube Admin Panel</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f8f6;
+      color: #17231e;
+    }
+
+    .header {
+      background: #1f7a52;
+      color: white;
+      padding: 18px 25px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h2 {
+      margin: 0;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .logout {
+      background: white;
+      color: #1f7a52;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+
+    .login-box,
+    .panel {
+      background: white;
+      padding: 25px;
+      border-radius: 18px;
+      box-shadow: 0 5px 20px rgba(0,0,0,.08);
+    }
+
+    input {
+      width: 100%;
+      padding: 13px;
+      margin: 8px 0;
+      border: 1px solid #ccd8d2;
+      border-radius: 10px;
+      font-size: 15px;
+    }
+
+    .login-btn {
+      width: 100%;
+      background: #1f7a52;
+      color: white;
+      margin-top: 10px;
+    }
+
+    .application {
+      border: 1px solid #d9e5df;
+      border-radius: 15px;
+      padding: 18px;
+      margin-top: 15px;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 20px;
+      background: #eee;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    .approve {
+      background: #218838;
+      color: white;
+      margin-right: 8px;
+    }
+
+    .decline {
+      background: #c82333;
+      color: white;
+    }
+
+    .refresh {
+      background: #e5f2eb;
+      color: #1f7a52;
+      margin-bottom: 15px;
+    }
+
+    #message {
+      margin-top: 12px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="header">
+    <h2>ForTube Admin Panel</h2>
+    <button class="logout" id="logoutBtn" style="display:none;">
+      Logout
+    </button>
+  </div>
+
+  <div class="container">
+
+    <!-- LOGIN -->
+    <div class="login-box" id="loginBox">
+
+      <h2>Admin Login</h2>
+
+      <input
+        type="email"
+        id="email"
+        placeholder="Admin email"
+      >
+
+      <input
+        type="password"
+        id="password"
+        placeholder="Password"
+      >
+
+      <button class="login-btn" id="loginBtn">
+        Login
+      </button>
+
+      <div id="message"></div>
+
+    </div>
+
+
+    <!-- ADMIN PANEL -->
+    <div class="panel" id="adminPanel" style="display:none;">
+
+      <h2>Monetization Applications</h2>
+
+      <button class="refresh" id="refreshBtn">
+        🔄 Refresh Applications
+      </button>
+
+      <div id="applications">
+        Loading...
+      </div>
+
+    </div>
+
+  </div>
+
+
+<script>
+
+const SUPABASE_URL =
+  "https://eaxstlpltwgpmaupgcwq.supabase.co";
+
+const SUPABASE_KEY =
+  "sb_publishable_sfcTaBDwgGM8ccmMfwP_ig_A6jTZ8w7";
+
+const supabaseClient =
+  supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+  );
+
+
+const loginBox =
+  document.getElementById("loginBox");
+
+const adminPanel =
+  document.getElementById("adminPanel");
+
+const logoutBtn =
+  document.getElementById("logoutBtn");
+
+const message =
+  document.getElementById("message");
+
+
+// LOGIN
+document
+  .getElementById("loginBtn")
+  .addEventListener("click", async () => {
+
+    const email =
+      document.getElementById("email").value.trim();
+
+    const password =
+      document.getElementById("password").value;
+
+    message.textContent = "Logging in...";
+
+    const { error } =
+      await supabaseClient.auth.signInWithPassword({
+        email,
+        password
+      });
+
+    if (error) {
+      message.textContent =
+        "❌ " + error.message;
+      return;
+    }
+
+    await checkAdmin();
+
+  });
+
+
+// CHECK ADMIN
+async function checkAdmin() {
+
+  const {
+    data: { user }
+  } =
+    await supabaseClient.auth.getUser();
+
+  if (!user) {
+    showLogin();
+    return;
+  }
+
+  const { data, error } =
+    await supabaseClient
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+  if (error || !data) {
+
+    await supabaseClient.auth.signOut();
+
+    message.textContent =
+      "❌ This account is not an admin.";
+
+    showLogin();
+
+    return;
+  }
+
+  showAdmin();
+  loadApplications();
+}
+
+
+// SHOW ADMIN
+function showAdmin() {
+
+  loginBox.style.display = "none";
+  adminPanel.style.display = "block";
+  logoutBtn.style.display = "block";
+
+}
+
+
+// SHOW LOGIN
+function showLogin() {
+
+  loginBox.style.display = "block";
+  adminPanel.style.display = "none";
+  logoutBtn.style.display = "none";
+
+}
+
+
+// LOAD APPLICATIONS
+async function loadApplications() {
+
+  const box =
+    document.getElementById("applications");
+
+  box.innerHTML = "Loading...";
+
+  const { data, error } =
+    await supabaseClient
+      .from("monetization_applications")
+      .select("*")
+      .order("created_at", {
+        ascending: false
+      });
+
+  if (error) {
+
+    box.innerHTML =
+      "❌ " + error.message;
+
+    return;
+  }
+
+  if (!data || data.length === 0) {
+
+    box.innerHTML =
+      "<p>No applications yet.</p>";
+
+    return;
+  }
+
+  box.innerHTML = "";
+
+  data.forEach(app => {
+
+    const div =
+      document.createElement("div");
+
+    div.className = "application";
+
+    const date =
+      new Date(app.created_at)
+        .toLocaleString();
+
+    div.innerHTML = `
+
+      <h3>Application #${app.id}</h3>
+
+      <p>
+        <strong>Email:</strong>
+        ${escapeHTML(app.email)}
+      </p>
+
+      <p>
+        <strong>Date:</strong>
+        ${date}
+      </p>
+
+      <p>
+        <strong>Status:</strong>
+        <span class="status">
+          ${escapeHTML(app.status)}
+        </span>
+      </p>
+
+      ${
+        app.status === "pending"
+        ? `
+          <button
+            class="approve"
+            onclick="reviewApplication(${app.id}, 'approved')">
+            ✅ Approve
+          </button>
+
+          <button
+            class="decline"
+            onclick="reviewApplication(${app.id}, 'declined')">
+            ❌ Decline
+          </button>
+        `
+        : ""
+      }
+
+    `;
+
+    box.appendChild(div);
+
+  });
+
+}
+
+
+// APPROVE / DECLINE
+async function reviewApplication(
+  applicationId,
+  newStatus
+) {
+
+  const action =
+    newStatus === "approved"
+      ? "approve"
+      : "decline";
+
+  if (!confirm(
+    `Are you sure you want to ${action} this application?`
+  )) {
+    return;
+  }
+
+  const { data, error } =
+    await supabaseClient.rpc(
+      "admin_review_monetization",
+      {
+        application_id: applicationId,
+        new_status: newStatus
+      }
+    );
+
+  if (error) {
+
+    alert("❌ " + error.message);
+
+    return;
+  }
+
+  if (!data) {
+
+    alert("Application not found.");
+
+    return;
+  }
+
+  alert(
+    newStatus === "approved"
+      ? "✅ Application approved!"
+      : "❌ Application declined!"
+  );
+
+  loadApplications();
+
+}
+
+
+// ESCAPE HTML
+function escapeHTML(value) {
+
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+}
+
+
+// REFRESH
+document
+  .getElementById("refreshBtn")
+  .addEventListener(
+    "click",
+    loadApplications
+  );
+
+
+// LOGOUT
+logoutBtn.addEventListener(
+  "click",
+  async () => {
+
+    await supabaseClient.auth.signOut();
+
+    showLogin();
+
+  }
+);
+
+
+// CHECK SESSION
+checkAdmin();
+
+</script>
+
+</body>
+</html>

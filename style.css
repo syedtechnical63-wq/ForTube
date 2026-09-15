@@ -1,0 +1,162 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background: #f9f9f9;
+    color: #111;
+}
+
+/* Header */
+header {
+    height: 60px;
+    background: white;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid #ddd;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.logo {
+    font-size: 25px;
+    font-weight: bold;
+    color: #ff0000;
+}
+
+.search {
+    margin-left: auto;
+    margin-right: auto;
+    width: 45%;
+    display: flex;
+}
+
+.search input {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid #ccc;
+    border-radius: 25px 0 0 25px;
+    font-size: 16px;
+}
+
+.search button {
+    width: 60px;
+    border: 1px solid #ccc;
+    border-left: none;
+    border-radius: 0 25px 25px 0;
+    background: #f2f2f2;
+    cursor: pointer;
+}
+
+/* Layout */
+.container {
+    display: flex;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 220px;
+    min-height: calc(100vh - 60px);
+    background: white;
+    padding: 20px 10px;
+    position: fixed;
+}
+
+.sidebar a {
+    display: block;
+    padding: 14px;
+    margin-bottom: 5px;
+    text-decoration: none;
+    color: #111;
+    border-radius: 10px;
+}
+
+.sidebar a:hover {
+    background: #eee;
+}
+
+/* Videos */
+.content {
+    margin-left: 220px;
+    padding: 25px;
+    width: 100%;
+}
+
+.video-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+}
+
+.video-card {
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.thumbnail {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+}
+
+.video-info {
+    padding: 12px;
+}
+
+.video-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.channel {
+    color: #666;
+    font-size: 14px;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+
+    header {
+        padding: 0 10px;
+    }
+
+    .logo {
+        font-size: 20px;
+    }
+
+    .search {
+        width: 55%;
+    }
+
+    .sidebar {
+        display: none;
+    }
+
+    .content {
+        margin-left: 0;
+        padding: 12px;
+    }
+
+    .video-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+
+    .video-grid {
+        grid-template-columns: 1fr;
+    }
+}
