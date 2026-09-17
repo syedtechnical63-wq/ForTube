@@ -1,5 +1,5 @@
 /* ============================================================
-   FORTUBE - MAIN SCRIPT (FINAL - ALL FEATURES)
+   FORTUBE - MAIN SCRIPT (FINAL - LOGIN + VIDEO FIXED)
    ============================================================ */
 
 const SUPABASE_URL = "https://eaxstlpltwgpmaupgcwq.supabase.co";
@@ -244,7 +244,6 @@ const subscriptionsPage = $('subscriptionsPage');
 const subsBackBtn = $('subsBackBtn');
 const subscriptionsBody = $('subscriptionsBody');
 
-// MY VIDEO ACTIONS
 const videoActionsOverlay = $('videoActionsOverlay');
 const videoActionsMenu = $('videoActionsMenu');
 const vaThumb = $('vaThumb');
@@ -255,7 +254,6 @@ const vaEditBtn = $('vaEditBtn');
 const vaPrivacyBtn = $('vaPrivacyBtn');
 const vaDeleteBtn = $('vaDeleteBtn');
 
-// EDIT VIDEO
 const editVideoPage = $('editVideoPage');
 const editVideoBackBtn = $('editVideoBackBtn');
 const editVideoThumb = $('editVideoThumb');
@@ -266,7 +264,6 @@ const editVideoCategory = $('editVideoCategory');
 const editVideoCancelBtn = $('editVideoCancelBtn');
 const editVideoSaveBtn = $('editVideoSaveBtn');
 
-// TERMS & SUPPORT
 const termsPage = $('termsPage');
 const termsBackBtn = $('termsBackBtn');
 const supportPage = $('supportPage');
@@ -349,7 +346,6 @@ async function generateThumbnailFromVideo(videoBlob, seekTime = 1) {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, w, h);
           const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          console.log('✅ Thumbnail generated:', w + 'x' + h);
           finish(dataUrl);
         } catch (err) {
           finish(null, err);
@@ -542,78 +538,121 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
   });
 }
 
-// ==================== AUTH ====================
+// ==================== AUTH (RANDOM EMAIL/PASSWORD SUPPORT) ====================
 async function checkSession() {
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  if (session && session.user) {
-    state.loggedIn = true;
-    state.user = session.user;
-    state.email = session.user.email;
-    await loadUserChannel();
-    if (loginGate) loginGate.classList.add('hide');
-    updateUI();
-    await loadFeedFromSupabase();
-    await loadNotifications();
-  } else {
+  try {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session && session.user) {
+      state.loggedIn = true;
+      state.user = session.user;
+      state.email = session.user.email;
+      await loadUserChannel();
+      if (loginGate) loginGate.classList.add('hide');
+      updateUI();
+      await loadFeedFromSupabase();
+      await loadNotifications();
+    } else {
+      if (loginGate) loginGate.classList.remove('hide');
+    }
+  } catch (e) {
+    console.error('Session check failed:', e);
     if (loginGate) loginGate.classList.remove('hide');
   }
 }
 
 async function loadUserChannel() {
   if (!state.user) return;
-  const { data } = await supabaseClient
-    .from('channels')
-    .select('*')
-    .eq('owner_id', state.user.id)
-    .maybeSingle();
-  state.channel = data || null;
+  try {
+    const { data } = await supabaseClient
+      .from('channels')
+      .select('*')
+      .eq('owner_id', state.user.id)
+      .maybeSingle();
+    state.channel = data || null;
+  } catch (e) {
+    console.error('Channel load error:', e);
+    state.channel = null;
+  }
 }
 
 if (gateLoginBtn) {
   gateLoginBtn.addEventListener('click', async () => {
     const email = gateEmail.value.trim();
     const pass = gatePassword.value.trim();
-    if (!email || !email.includes('@')) { showToast('Valid email enter karein'); return; }
-    if (!pass || pass.length < 6) { showToast('Password min 6 characters'); return; }
+    
+    if (!email || !email.includes('@')) { 
+      showToast('Valid email enter karein'); 
+      return; 
+    }
+    if (!pass || pass.length < 1) { 
+      showToast('Password enter karein'); 
+      return; 
+    }
 
     gateLoginBtn.disabled = true;
     gateLoginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Please wait...';
 
-    let { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pass });
+    try {
+      // 1. Try sign in first
+      let { data, error } = await supabaseClient.auth.signInWithPassword({ 
+        email, 
+        password: pass 
+      });
 
-    if (error && (error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('credentials'))) {
-      const signup = await supabaseClient.auth.signUp({ email, password: pass });
-      if (signup.error) {
-        showToast('❌ ' + signup.error.message);
-        gateLoginBtn.disabled = false;
-        gateLoginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login / Sign Up';
-        return;
+      // 2. If login fails, try signup
+      if (error) {
+        console.log('Sign in failed, trying signup...');
+        const signup = await supabaseClient.auth.signUp({ 
+          email, 
+          password: pass 
+        });
+        
+        if (signup.error) {
+          showToast('❌ ' + signup.error.message);
+          gateLoginBtn.disabled = false;
+          gateLoginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login / Sign Up';
+          return;
+        }
+        
+        data = signup.data;
+        
+        // 3. If no session (email confirmation needed), force login anyway
+        if (!signup.data.session) {
+          console.log('No session from signup, trying direct login...');
+          const retry = await supabaseClient.auth.signInWithPassword({ 
+            email, 
+            password: pass 
+          });
+          
+          if (retry.error) {
+            // Email confirmation required
+            showToast('📧 Email confirmation required. Supabase → Auth → Providers → Email → Confirm email OFF karein');
+            gateLoginBtn.disabled = false;
+            gateLoginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login / Sign Up';
+            return;
+          }
+          data = retry.data;
+        }
+        
+        showToast('✅ Account created!');
       }
-      data = signup.data;
-      if (!signup.data.session) {
-        showToast('📧 Email confirm karein, phir login karein');
-        gateLoginBtn.disabled = false;
-        gateLoginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login / Sign Up';
-        return;
-      }
-      showToast('✅ Account created!');
-    } else if (error) {
-      showToast('❌ ' + error.message);
-      gateLoginBtn.disabled = false;
-      gateLoginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login / Sign Up';
-      return;
-    }
 
-    if (data.user) {
-      state.loggedIn = true;
-      state.user = data.user;
-      state.email = data.user.email;
-      await loadUserChannel();
-      if (loginGate) loginGate.classList.add('hide');
-      showToast('✅ Welcome ' + email);
-      updateUI();
-      await loadFeedFromSupabase();
-      await loadNotifications();
+      // 4. User logged in
+      if (data.user) {
+        state.loggedIn = true;
+        state.user = data.user;
+        state.email = data.user.email;
+        await loadUserChannel();
+        loginGate.classList.add('hide');
+        showToast('✅ Welcome ' + email);
+        updateUI();
+        await loadFeedFromSupabase();
+        await loadNotifications();
+      }
+
+    } catch (err) {
+      console.error('Login error:', err);
+      showToast('❌ ' + err.message);
     }
 
     gateLoginBtn.disabled = false;
@@ -621,8 +660,16 @@ if (gateLoginBtn) {
   });
 }
 
-if (gatePassword) gatePassword.addEventListener('keydown', e => { if (e.key === 'Enter') gateLoginBtn.click(); });
-if (gateEmail) gateEmail.addEventListener('keydown', e => { if (e.key === 'Enter') gatePassword.focus(); });
+if (gatePassword) {
+  gatePassword.addEventListener('keydown', e => { 
+    if (e.key === 'Enter') gateLoginBtn.click(); 
+  });
+}
+if (gateEmail) {
+  gateEmail.addEventListener('keydown', e => { 
+    if (e.key === 'Enter') gatePassword.focus(); 
+  });
+}
 
 if (logoutBtn) {
   logoutBtn.addEventListener('click', async () => {
@@ -646,26 +693,33 @@ if (logoutBtn) {
 
 // ==================== FEED ====================
 async function loadFeedFromSupabase() {
-  const { data: videos, error } = await supabaseClient
-    .from('videos')
-    .select('*')
-    .order('created_at', { ascending: false });
+  try {
+    const { data: videos, error } = await supabaseClient
+      .from('videos')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-  if (error) { console.error('Feed error:', error); return; }
-  state.allVideos = videos || [];
+    if (error) { 
+      console.error('Feed error:', error); 
+      return; 
+    }
+    state.allVideos = videos || [];
 
-  const { data: channels } = await supabaseClient.from('channels').select('*');
-  state.allChannels = channels || [];
+    const { data: channels } = await supabaseClient.from('channels').select('*');
+    state.allChannels = channels || [];
 
-  if (state.user) {
-    const { data: subs } = await supabaseClient
-      .from('subscriptions')
-      .select('channel_id')
-      .eq('user_id', state.user.id);
-    state.subscriptions = (subs || []).map(s => s.channel_id);
+    if (state.user) {
+      const { data: subs } = await supabaseClient
+        .from('subscriptions')
+        .select('channel_id')
+        .eq('user_id', state.user.id);
+      state.subscriptions = (subs || []).map(s => s.channel_id);
+    }
+
+    renderFeed('', currentFilter);
+  } catch (e) {
+    console.error('Feed load error:', e);
   }
-
-  renderFeed('', currentFilter);
 }
 
 let currentFilter = 'home';
@@ -783,12 +837,15 @@ function renderFeed(filterText = '', categoryFilter = null) {
     `;
 
     card.addEventListener('click', (e) => {
+      console.log('🎬 Video card clicked:', vid.title);
+      
       if (e.target.closest('.my-video-menu-btn')) {
         e.stopPropagation();
         e.preventDefault();
         openVideoActions(vid);
         return;
       }
+      
       openWatchPage(vid);
     });
 
@@ -796,25 +853,49 @@ function renderFeed(filterText = '', categoryFilter = null) {
   });
 }
 
-// ==================== WATCH PAGE ====================
+// ============================================================
+// WATCH PAGE (FIXED)
+// ============================================================
 async function openWatchPage(vid) {
-  if (!watchHeaderTitle || !watchBody) return;
-  watchHeaderTitle.textContent = vid.title;
+  console.log('🎬 Opening watch page for:', vid.title);
+  
+  if (!vid) {
+    showToast('❌ Video data missing');
+    return;
+  }
+  
+  if (!watchPage || !watchBody) {
+    console.error('❌ watchPage or watchBody element not found!');
+    showToast('❌ Watch page missing');
+    return;
+  }
+
+  if (watchHeaderTitle) watchHeaderTitle.textContent = vid.title;
 
   let videoUrl = vid.video_url;
+  console.log('📹 Video URL:', videoUrl);
 
-  const cachedBlob = await getVideoFromIDB(vid.id);
-  if (cachedBlob) {
-    videoUrl = URL.createObjectURL(cachedBlob);
-  } else if (vid.video_url) {
-    try {
-      const resp = await fetch(vid.video_url);
-      if (resp.ok) {
-        const blob = await resp.blob();
-        await saveVideoToIDB(vid.id, blob);
-        videoUrl = URL.createObjectURL(blob);
+  try {
+    const cachedBlob = await getVideoFromIDB(vid.id);
+    if (cachedBlob) {
+      videoUrl = URL.createObjectURL(cachedBlob);
+      console.log('✅ Loaded from cache');
+    } else if (vid.video_url) {
+      try {
+        const resp = await fetch(vid.video_url);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          await saveVideoToIDB(vid.id, blob);
+          videoUrl = URL.createObjectURL(blob);
+          console.log('✅ Fetched and cached');
+        }
+      } catch (e) { 
+        console.warn('Fetch failed, using direct URL');
+        videoUrl = vid.video_url; 
       }
-    } catch (e) { videoUrl = vid.video_url; }
+    }
+  } catch (e) {
+    console.error('Cache error:', e);
   }
 
   const ch = state.allChannels.find(c => c.username === vid.channel_username) || {};
@@ -827,9 +908,18 @@ async function openWatchPage(vid) {
 
   let isSubscribed = state.subscriptions.includes(chId);
 
+  let videoHTML = '';
+  if (videoUrl) {
+    videoHTML = `<video src="${videoUrl}" controls autoplay playsinline preload="metadata"></video>`;
+    console.log('✅ Video element created');
+  } else {
+    videoHTML = `<i class="fas fa-play-circle"></i>`;
+    console.warn('⚠️ No video URL available');
+  }
+
   watchBody.innerHTML = `
     <div class="watch-video-area">
-      ${videoUrl ? `<video src="${videoUrl}" controls autoplay playsinline preload="metadata"></video>` : `<i class="fas fa-play-circle"></i>`}
+      ${videoHTML}
     </div>
     <div class="watch-info">
       <div class="watch-title">${escapeHTML(vid.title)}</div>
@@ -867,9 +957,11 @@ async function openWatchPage(vid) {
   `;
 
   if (vid.owner_id !== state.user?.id) {
-    const newViews = (vid.views || 0) + 1;
-    await supabaseClient.from('videos').update({ views: newViews }).eq('id', vid.id);
-    vid.views = newViews;
+    try {
+      const newViews = (vid.views || 0) + 1;
+      await supabaseClient.from('videos').update({ views: newViews }).eq('id', vid.id);
+      vid.views = newViews;
+    } catch (e) { console.warn('View increment failed'); }
   }
 
   await loadComments(vid.id);
@@ -911,14 +1003,6 @@ async function openWatchPage(vid) {
     await supabaseClient.from('videos').update({ likes: newLikes }).eq('id', vid.id);
     document.getElementById('likeCount').textContent = newLikes;
     showToast('👍 Liked');
-    if (vid.owner_id !== state.user?.id) {
-      await supabaseClient.from('notifications').insert({
-        user_id: vid.owner_id,
-        type: 'like',
-        message: `${state.channel?.name || 'Someone'} liked your video "${vid.title}"`,
-        video_id: vid.id
-      });
-    }
   });
 
   document.getElementById('shareBtn')?.addEventListener('click', () => {
@@ -951,6 +1035,7 @@ async function openWatchPage(vid) {
   });
 
   watchPage.classList.add('open');
+  console.log('✅ Watch page opened');
 }
 
 async function loadComments(videoId) {
@@ -958,30 +1043,37 @@ async function loadComments(videoId) {
   const countEl = document.getElementById('commentCount');
   if (!list) return;
 
-  const { data, error } = await supabaseClient
-    .from('comments')
-    .select('*')
-    .eq('video_id', videoId)
-    .order('created_at', { ascending: false });
+  try {
+    const { data, error } = await supabaseClient
+      .from('comments')
+      .select('*')
+      .eq('video_id', videoId)
+      .order('created_at', { ascending: false });
 
-  if (error) { list.innerHTML = '<div class="no-comments">Comments load nahi hui</div>'; return; }
-  if (countEl) countEl.textContent = (data || []).length;
+    if (error) { 
+      list.innerHTML = '<div class="no-comments">Comments load nahi hui</div>'; 
+      return; 
+    }
+    if (countEl) countEl.textContent = (data || []).length;
 
-  if (!data || data.length === 0) {
-    list.innerHTML = '<div class="no-comments">No comments yet. Be the first!</div>';
-    return;
-  }
+    if (!data || data.length === 0) {
+      list.innerHTML = '<div class="no-comments">No comments yet. Be the first!</div>';
+      return;
+    }
 
-  list.innerHTML = data.map(c => `
-    <div class="comment-item">
-      <div class="comment-avatar">${escapeHTML((c.author_name || 'U').charAt(0))}</div>
-      <div class="comment-body">
-        <div class="comment-author">${escapeHTML(c.author_name || 'User')}</div>
-        <div class="comment-text">${escapeHTML(c.text)}</div>
-        <div class="comment-time">${new Date(c.created_at).toLocaleString()}</div>
+    list.innerHTML = data.map(c => `
+      <div class="comment-item">
+        <div class="comment-avatar">${escapeHTML((c.author_name || 'U').charAt(0))}</div>
+        <div class="comment-body">
+          <div class="comment-author">${escapeHTML(c.author_name || 'User')}</div>
+          <div class="comment-text">${escapeHTML(c.text)}</div>
+          <div class="comment-time">${new Date(c.created_at).toLocaleString()}</div>
+        </div>
       </div>
-    </div>
-  `).join('');
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="no-comments">Error loading comments</div>';
+  }
 }
 
 if (watchBackBtn) watchBackBtn.addEventListener('click', () => watchPage.classList.remove('open'));
@@ -1237,9 +1329,6 @@ const BOT_RESPONSES = {
   'delete': '🗑 To delete your video:\n1. Find your video (with YOURS badge)\n2. Tap the 3-dot menu\n3. Choose "Delete Video"\n4. Confirm deletion',
   'edit': '✏️ To edit your video:\n1. Tap 3-dot menu on your video\n2. Choose "Edit Video"\n3. Change title, description, or category\n4. Save changes',
   'privacy': '🔒 To change privacy:\n1. Tap 3-dot menu\n2. Choose "Change Privacy"\n3. Toggle: Public → Unlisted → Private',
-  'short': '⚡ Shorts are videos under 60 seconds. Upload via + → "Upload Short".',
-  'thumbnail': '🖼 Thumbnails are auto-generated from your video\'s first frame. You can upload a custom one too!',
-  'audio': '🔊 Audio issues? Make sure:\n1. Video has audio originally\n2. Using Chrome or Edge browser\n3. Volume is not muted',
   'hello': 'Hi there! 👋 How can I help you today?',
   'hi': 'Hello! 👋 How can I help you today?',
   'thanks': 'You\'re welcome! 😊 Anything else I can help with?',
@@ -1253,7 +1342,7 @@ function getBotResponse(userMsg) {
   for (const key of Object.keys(BOT_RESPONSES)) {
     if (msg.includes(key)) return BOT_RESPONSES[key];
   }
-  return `Thanks for your message! 📩\n\nOur support team has been notified at **syedtechnical63@gmail.com**. We'll reply as soon as possible.\n\nFor faster help, try asking about:\n• Upload\n• Monetization\n• Editing\n• Privacy`;
+  return `Thanks for your message! 📩\n\nOur support team has been notified at **syedtechnical63@gmail.com**. We'll reply as soon as possible.`;
 }
 
 function addSupportMessage(text, isUser = false) {
@@ -1470,7 +1559,7 @@ async function handleGoLive() {
   if (subs < 50) {
     showAlert(
       'Live Streaming Locked',
-      `You need at least <strong>50 subscribers</strong> to start live streaming.<br><br>You currently have <strong>${subs}</strong> subscriber(s).<br>Keep creating content to grow your channel!`,
+      `You need at least <strong>50 subscribers</strong> to start live streaming.<br><br>You currently have <strong>${subs}</strong> subscriber(s).`,
       'fa-broadcast-tower'
     );
     return;
@@ -1730,7 +1819,6 @@ async function openMetadataPage() {
           <i class="fas fa-camera-retro"></i><span>Tap to set thumbnail</span>
         </div>
       `;
-      showToast('⚠️ Auto failed, upload manually');
     }
   }
 }
@@ -1865,7 +1953,6 @@ if (metadataPublishBtn) {
       if (videoBlob.size === 0) throw new Error('Video file empty');
 
       const originalSizeMB = videoBlob.size / (1024 * 1024);
-      console.log('📦 Original:', originalSizeMB.toFixed(1), 'MB');
 
       const MAX_SIZE_MB = 40;
       if (originalSizeMB > MAX_SIZE_MB) {
@@ -2378,11 +2465,7 @@ async function loadNotifications() {
     .order('created_at', { ascending: false })
     .limit(50);
   state.notifications = data || [];
-  if (state.notifications.length > 0) {
-    if (notifDot) notifDot.style.display = 'block';
-  } else {
-    if (notifDot) notifDot.style.display = 'none';
-  }
+  if (notifDot) notifDot.style.display = state.notifications.length > 0 ? 'block' : 'none';
 }
 
 if (notifBtn) {
@@ -2652,59 +2735,15 @@ if (settingsBtn) {
   });
 }
 
-if (settingsLanguage) {
-  settingsLanguage.addEventListener('change', () => {
-    state.preferences.language = settingsLanguage.value;
-    showToast('🌐 Language: ' + settingsLanguage.value);
-  });
-}
-if (settingsRegion) {
-  settingsRegion.addEventListener('change', () => {
-    state.preferences.region = settingsRegion.value;
-    showToast('📍 Region: ' + settingsRegion.value);
-  });
-}
-if (settingsCurrency) {
-  settingsCurrency.addEventListener('change', () => {
-    state.preferences.currency = settingsCurrency.value;
-    showToast('💱 Currency: ' + settingsCurrency.value);
-  });
-}
-if (settingsQuality) {
-  settingsQuality.addEventListener('change', () => {
-    state.preferences.quality = settingsQuality.value;
-    showToast('🎬 Quality: ' + settingsQuality.value);
-  });
-}
+if (settingsLanguage) settingsLanguage.addEventListener('change', () => { state.preferences.language = settingsLanguage.value; showToast('🌐 Language: ' + settingsLanguage.value); });
+if (settingsRegion) settingsRegion.addEventListener('change', () => { state.preferences.region = settingsRegion.value; showToast('📍 Region: ' + settingsRegion.value); });
+if (settingsCurrency) settingsCurrency.addEventListener('change', () => { state.preferences.currency = settingsCurrency.value; showToast('💱 Currency: ' + settingsCurrency.value); });
+if (settingsQuality) settingsQuality.addEventListener('change', () => { state.preferences.quality = settingsQuality.value; showToast('🎬 Quality: ' + settingsQuality.value); });
 
-if (toggleSubtitles) {
-  toggleSubtitles.addEventListener('click', () => {
-    toggleSubtitles.classList.toggle('active');
-    state.preferences.subtitles = toggleSubtitles.classList.contains('active');
-    showToast(state.preferences.subtitles ? 'Subtitles ON' : 'Subtitles OFF');
-  });
-}
-if (toggleRestricted) {
-  toggleRestricted.addEventListener('click', () => {
-    toggleRestricted.classList.toggle('active');
-    state.preferences.restricted = toggleRestricted.classList.contains('active');
-    showToast(state.preferences.restricted ? 'Restricted mode ON' : 'Restricted mode OFF');
-  });
-}
-if (toggleHistory) {
-  toggleHistory.addEventListener('click', () => {
-    toggleHistory.classList.toggle('active');
-    state.preferences.history = toggleHistory.classList.contains('active');
-    showToast(state.preferences.history ? 'Watch history saved' : 'Watch history paused');
-  });
-}
-if (toggleNotifications) {
-  toggleNotifications.addEventListener('click', () => {
-    toggleNotifications.classList.toggle('active');
-    state.preferences.notifications = toggleNotifications.classList.contains('active');
-    showToast(state.preferences.notifications ? 'Notifications ON' : 'Notifications OFF');
-  });
-}
+if (toggleSubtitles) toggleSubtitles.addEventListener('click', () => { toggleSubtitles.classList.toggle('active'); showToast(toggleSubtitles.classList.contains('active') ? 'Subtitles ON' : 'Subtitles OFF'); });
+if (toggleRestricted) toggleRestricted.addEventListener('click', () => { toggleRestricted.classList.toggle('active'); showToast(toggleRestricted.classList.contains('active') ? 'Restricted ON' : 'Restricted OFF'); });
+if (toggleHistory) toggleHistory.addEventListener('click', () => { toggleHistory.classList.toggle('active'); showToast(toggleHistory.classList.contains('active') ? 'History ON' : 'History OFF'); });
+if (toggleNotifications) toggleNotifications.addEventListener('click', () => { toggleNotifications.classList.toggle('active'); showToast(toggleNotifications.classList.contains('active') ? 'Notifications ON' : 'Notifications OFF'); });
 
 if (clearCacheBtn) {
   clearCacheBtn.addEventListener('click', () => {
@@ -2716,8 +2755,8 @@ if (clearCacheBtn) {
 
 if (deleteAccountBtn) {
   deleteAccountBtn.addEventListener('click', () => {
-    if (confirm('Are you sure you want to delete your account?\n\nThis will remove all your videos and channel.')) {
-      showToast('⚠️ Contact support: syedtechnical63@gmail.com');
+    if (confirm('Are you sure you want to delete your account?')) {
+      showToast('⚠️ Contact: syedtechnical63@gmail.com');
     }
   });
 }
