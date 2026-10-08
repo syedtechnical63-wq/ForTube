@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
 </head>
 <body>
   <div class="app" id="app">
@@ -20,8 +21,9 @@
         <label for="gateEmail">Email address</label>
         <input type="email" id="gateEmail" placeholder="you@example.com" autocomplete="email">
         <label for="gatePassword">Password</label>
-        <input type="password" id="gatePassword" placeholder="••••••••">
+        <input type="password" id="gatePassword" placeholder="••••••••" autocomplete="current-password">
         <button class="gate-btn" id="gateLoginBtn"><i class="fas fa-sign-in-alt"></i> Login / Sign Up</button>
+        <button type="button" id="forgotPasswordLink" style="background:none;border:none;color:#1d7e5c;font-size:0.78rem;font-weight:700;margin-top:12px;cursor:pointer;text-decoration:underline;width:100%;">Forgot Password?</button>
       </div>
       <div class="gate-note">By continuing you agree to ForTube's Terms & Privacy Policy.</div>
     </div>
@@ -106,13 +108,133 @@
           <p>Create a short video (max 60s)</p>
         </div>
       </div>
-      <div class="plus-menu-option" id="plusLiveBtn">
+      <div class="plus-menu-option" id="plusLiveBtn" style="position:relative;">
         <div class="plus-icon-wrap" style="background:linear-gradient(135deg,#ff3b3b,#ff6b00);">
           <i class="fas fa-broadcast-tower"></i>
         </div>
         <div class="plus-text">
-          <h4>Go Live</h4>
+          <h4>Go Live <span id="liveSubsBadge" style="font-size:0.65rem;background:#e8f5ee;color:#0a6b3c;padding:2px 8px;border-radius:20px;margin-left:6px;"></span></h4>
           <p>Start live streaming</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE SETUP MODAL -->
+    <div class="live-setup-modal" id="liveSetupModal">
+      <div class="live-setup-inner">
+        <div class="live-setup-header">
+          <button class="back-btn" id="liveSetupBackBtn"><i class="fas fa-arrow-left"></i></button>
+          <h3><i class="fas fa-broadcast-tower"></i> Go Live</h3>
+        </div>
+        <div class="live-setup-body">
+          <div class="live-preview-box">
+            <video id="livePreviewVideo" autoplay playsinline muted></video>
+            <div class="live-preview-overlay">
+              <span class="live-dot"></span> PREVIEW
+            </div>
+          </div>
+          
+          <label class="metadata-label">Live Title *</label>
+          <input type="text" id="liveTitle" class="metadata-input" placeholder="e.g. Live Gaming Session">
+          
+          <label class="metadata-label">Description</label>
+          <textarea id="liveDescription" class="metadata-textarea" placeholder="Tell viewers what you're streaming..."></textarea>
+          
+          <label class="metadata-label">Category</label>
+          <select id="liveCategory" class="metadata-select">
+            <option value="Gaming">Gaming</option>
+            <option value="Sports">Sports</option>
+            <option value="Music">Music</option>
+            <option value="Education">Education</option>
+            <option value="Entertainment">Entertainment</option>
+            <option value="News">News</option>
+            <option value="Tech">Tech</option>
+            <option value="Cooking">Cooking</option>
+            <option value="Travel">Travel</option>
+            <option value="Fitness">Fitness</option>
+          </select>
+          
+          <label class="metadata-label">Tags</label>
+          <div class="tag-input-wrap">
+            <input type="text" id="liveTagInput" class="metadata-input" placeholder="gaming, live">
+            <button class="tag-add-btn" id="liveAddTagBtn"><i class="fas fa-plus"></i></button>
+          </div>
+          <div class="tags-container" id="liveTagsContainer"></div>
+          
+          <label class="metadata-label">Visibility</label>
+          <div class="visibility-row">
+            <div class="visibility-option active" data-livevis="public"><i class="fas fa-globe"></i> Public</div>
+            <div class="visibility-option" data-livevis="unlisted"><i class="fas fa-link"></i> Unlisted</div>
+          </div>
+
+          <div class="live-info-note">
+            <i class="fas fa-info-circle"></i>
+            <div>
+              <strong>Live Streaming Info:</strong><br>
+              • Your live stream will be visible to all users<br>
+              • Viewers can watch on any device<br>
+              • Views & watch time count towards monetization<br>
+              • Stream ends when you tap "End Live"
+            </div>
+          </div>
+        </div>
+        <div class="publish-bar">
+          <button class="btn btn-secondary" id="liveSetupCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="liveStartBtn"><i class="fas fa-broadcast-tower"></i> Start Live</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE STREAMING PAGE (Broadcaster) -->
+    <div class="live-stream-page" id="liveStreamPage">
+      <div class="live-stream-header">
+        <div class="live-badge-animated"><span class="live-dot"></span> LIVE</div>
+        <div class="live-viewer-count" id="liveViewerCount"><i class="fas fa-eye"></i> 0 viewers</div>
+        <button class="live-end-btn" id="liveEndBtn"><i class="fas fa-stop"></i> End Live</button>
+      </div>
+      <div class="live-stream-body">
+        <div id="liveBroadcastContainer" class="live-broadcast-container"></div>
+        <div class="live-stream-info">
+          <h3 id="liveStreamTitle">Live Stream</h3>
+          <div class="live-stream-meta">
+            <span><i class="fas fa-user"></i> <span id="liveStreamChannel">Channel</span></span>
+            <span><i class="fas fa-clock"></i> <span id="liveStreamDuration">00:00</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE WATCH PAGE (Viewer) -->
+    <div class="live-watch-page" id="liveWatchPage">
+      <div class="watch-header">
+        <button class="back-btn" id="liveWatchBackBtn"><i class="fas fa-arrow-left"></i></button>
+        <h3 id="liveWatchHeaderTitle">Live Stream</h3>
+      </div>
+      <div class="live-watch-body">
+        <div class="live-watch-video-area">
+          <div id="liveWatchContainer" class="live-watch-container"></div>
+          <div class="live-badge-floating"><span class="live-dot"></span> LIVE</div>
+          <div class="live-viewer-badge" id="liveWatchViewers"><i class="fas fa-eye"></i> 0</div>
+        </div>
+        <div class="watch-info">
+          <div class="watch-title" id="liveWatchTitle">Live Stream</div>
+          <div class="watch-meta">
+            <span><i class="fas fa-user"></i> <span id="liveWatchChannel">Channel</span></span>
+            <span><i class="fas fa-clock"></i> <span id="liveWatchDuration">00:00</span></span>
+          </div>
+          <div class="watch-channel-row">
+            <div class="watch-channel-icon" id="liveWatchChannelIcon" style="cursor:pointer;">👤</div>
+            <div class="watch-channel-info" id="liveWatchChannelInfo" style="cursor:pointer;">
+              <div class="watch-channel-name" id="liveWatchChannelName"><i class="fas fa-check-circle"></i> Channel</div>
+              <div class="watch-channel-subs" id="liveWatchSubsCount">0 subscribers</div>
+            </div>
+            <button class="subscribe-btn" id="liveWatchSubBtn"><i class="fas fa-plus"></i> Subscribe</button>
+          </div>
+          <div class="watch-actions">
+            <button class="action-btn" id="liveLikeBtn"><i class="fas fa-thumbs-up"></i> <span id="liveLikeCount">0</span></button>
+            <button class="action-btn" id="liveShareBtn"><i class="fas fa-share"></i> Share</button>
+          </div>
+          <div class="watch-desc" id="liveWatchDesc">Live stream description</div>
         </div>
       </div>
     </div>
@@ -126,6 +248,7 @@
       </div>
       <div class="drawer-links">
         <div class="drawer-link" data-drawer="home"><i class="fas fa-home"></i> Home</div>
+        <div class="drawer-link" data-drawer="live"><i class="fas fa-broadcast-tower"></i> Live Now</div>
         <div class="drawer-link" data-drawer="gaming"><i class="fas fa-gamepad"></i> Gaming</div>
         <div class="drawer-link" data-drawer="sports"><i class="fas fa-futbol"></i> Sports</div>
         <div class="drawer-link" data-drawer="yourvideos"><i class="fas fa-video"></i> Your Videos</div>
@@ -264,9 +387,14 @@
         <h3>Monetization</h3>
       </div>
       <div class="monetization-body">
+        
+        <!-- ELIGIBILITY CARD -->
         <div class="criteria-card" id="eligibilityCard">
           <h2>ForTube Partner Program</h2>
-          <div class="criteria-sub" id="criteriaSub">Complete all requirements to apply.</div>
+          <div class="criteria-sub" id="criteriaSub">
+            Complete all requirements to apply.<br>
+            <strong>Rate: $1 per 500 Subs • $0.50 per 1000 Hours</strong>
+          </div>
           <div class="criteria-item">
             <div class="ci-icon"><i class="fas fa-eye"></i></div>
             <div class="ci-text"><h4>1,000 Views</h4><p>From other users</p></div>
@@ -289,6 +417,7 @@
           <button class="verify-btn" id="verifyBtn" disabled>Not Eligible Yet</button>
         </div>
 
+        <!-- APPLY FORM -->
         <div class="criteria-card" id="monetizationApplyPage" style="display:none;">
           <h2>Apply for Monetization</h2>
           <div class="criteria-sub">Your channel is eligible. Submit application.</div>
@@ -305,21 +434,91 @@
           <div id="applicationStatus" style="display:none;margin-top:15px;padding:15px;border-radius:15px;text-align:center;font-weight:700;"></div>
         </div>
 
+        <!-- 📊 REVENUE + ANALYTICS DASHBOARD -->
         <div class="criteria-card" id="monetizationRevenuePage" style="display:none;">
           <h2>💰 Monetization Dashboard</h2>
+          
+          <!-- Total Revenue Big Display -->
           <div style="text-align:center;margin:25px 0;">
             <div style="font-size:15px;opacity:.75;">Total Revenue</div>
             <div style="font-size:2.5rem;font-weight:900;margin-top:5px;">$<span id="totalRevenue">0.00</span></div>
+            <div style="font-size:0.72rem;opacity:.6;margin-top:6px;">$1 per 500 Subs • $0.50 per 1000 Hours</div>
           </div>
+
+          <!-- 📊 ANALYTICS - 3 CARDS -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:20px 0;">
+            
+            <div style="background:linear-gradient(135deg,#e8f5ee,#d6efe0);border-radius:14px;padding:14px 8px;text-align:center;border:1.5px solid #b9e0cf;">
+              <i class="fas fa-eye" style="font-size:1.5rem;color:#1e8b4b;"></i>
+              <div style="font-size:1.4rem;font-weight:900;color:#0b4a5e;margin-top:8px;" id="analyticsViews">0</div>
+              <div style="font-size:0.6rem;color:#4d7e8c;font-weight:700;letter-spacing:0.5px;">VIEWS</div>
+            </div>
+
+            <div style="background:linear-gradient(135deg,#e1f0fa,#d0e8f5);border-radius:14px;padding:14px 8px;text-align:center;border:1.5px solid #a8d4e8;">
+              <i class="fas fa-clock" style="font-size:1.5rem;color:#1c7aa3;"></i>
+              <div style="font-size:1.4rem;font-weight:900;color:#0b4a5e;margin-top:8px;" id="analyticsWatchTime">0</div>
+              <div style="font-size:0.6rem;color:#4d7e8c;font-weight:700;letter-spacing:0.5px;">WATCH HRS</div>
+            </div>
+
+            <div style="background:linear-gradient(135deg,#fff4e0,#ffe0b8);border-radius:14px;padding:14px 8px;text-align:center;border:1.5px solid #ffd699;">
+              <i class="fas fa-users" style="font-size:1.5rem;color:#d97706;"></i>
+              <div style="font-size:1.4rem;font-weight:900;color:#0b4a5e;margin-top:8px;" id="analyticsSubs">0</div>
+              <div style="font-size:0.6rem;color:#4d7e8c;font-weight:700;letter-spacing:0.5px;">SUBS</div>
+            </div>
+
+          </div>
+
+          <!-- 📈 ANALYTICS GRAPH -->
+          <div style="background:white;border-radius:14px;padding:14px;margin-bottom:14px;border:1px solid #d9ecf5;">
+            <div style="font-size:0.8rem;font-weight:800;color:#0b4a5e;margin-bottom:10px;">
+              <i class="fas fa-chart-line"></i> Last 7 Days Growth
+            </div>
+            <canvas id="analyticsChart" style="width:100%;height:200px;"></canvas>
+            <div style="display:flex;gap:12px;justify-content:center;margin-top:10px;font-size:0.68rem;font-weight:700;">
+              <span style="display:flex;align-items:center;gap:4px;">
+                <span style="width:10px;height:10px;background:#1e8b4b;border-radius:50%;display:inline-block;"></span> Views
+              </span>
+              <span style="display:flex;align-items:center;gap:4px;">
+                <span style="width:10px;height:10px;background:#1c7aa3;border-radius:50%;display:inline-block;"></span> Watch Hours
+              </span>
+              <span style="display:flex;align-items:center;gap:4px;">
+                <span style="width:10px;height:10px;background:#d97706;border-radius:50%;display:inline-block;"></span> Subscribers
+              </span>
+            </div>
+          </div>
+
+          <!-- 💰 Revenue Breakdown -->
+          <div style="background:#f7fcff;border-radius:14px;padding:14px;margin-bottom:14px;border:1px solid #d9ecf5;">
+            <div style="font-size:0.8rem;font-weight:800;color:#0b4a5e;margin-bottom:10px;">
+              <i class="fas fa-chart-pie"></i> Revenue Breakdown
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:#4d7e8c;padding:6px 0;">
+              <span><i class="fas fa-users" style="color:#d97706;width:16px;"></i> Subscribers Revenue</span>
+              <span id="revenueFromSubs" style="font-weight:800;color:#1e8b4b;">$0.00</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:#4d7e8c;padding:6px 0;">
+              <span><i class="fas fa-clock" style="color:#1c7aa3;width:16px;"></i> Watch Time Revenue</span>
+              <span id="revenueFromWatch" style="font-weight:800;color:#1c7aa3;">$0.00</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;color:#0b4a5e;padding:8px 0;border-top:2px solid #cbe3f0;margin-top:8px;">
+              <span style="font-weight:800;">Total Revenue</span>
+              <span id="totalRevenueBreakdown" style="font-weight:900;color:#1e8b4b;">$0.00</span>
+            </div>
+          </div>
+
+          <!-- Qualified Views -->
           <div class="criteria-item">
             <div class="ci-icon"><i class="fas fa-eye"></i></div>
             <div class="ci-text"><h4>Qualified Views</h4><p>From other users</p></div>
             <span class="ci-progress" id="qualifiedViewsRevenue">0</span>
           </div>
+
+          <!-- Withdraw Button -->
           <button id="withdrawRevenueBtn" type="button" class="verify-btn eligible" style="margin-top:20px;width:100%;font-size:1rem;padding:15px;">
             <i class="fas fa-wallet"></i> Withdraw Revenue
           </button>
         </div>
+
       </div>
     </div>
 
@@ -359,7 +558,7 @@
           <label class="metadata-label">Account Number / IBAN</label>
           <input type="text" id="withdrawAccountNumber" class="metadata-input" placeholder="Account number or IBAN" />
           <label class="metadata-label">Withdrawal Amount</label>
-          <input type="number" id="withdrawAmount" class="metadata-input" min="0.01" step="0.01" placeholder="Amount" />
+          <input type="number" id="withdrawAmount" class="metadata-input" min="1" step="0.01" placeholder="Amount (min $1)" />
           <button id="submitWithdrawBtn" class="verify-btn eligible" type="button" style="margin-top:18px;width:100%;">
             <i class="fas fa-paper-plane"></i> Send Withdrawal Request
           </button>
@@ -480,6 +679,13 @@
               <span>Channel</span>
             </div>
             <span class="small-action-btn" id="settingsChannelStatus">None</span>
+          </div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <i class="fas fa-key"></i>
+              <span>Change Password</span>
+            </div>
+            <button class="small-action-btn" id="changePasswordBtn">Reset</button>
           </div>
         </div>
 
@@ -757,9 +963,7 @@
       </div>
     </div>
 
-    <!-- ============================================ -->
     <!-- MY VIDEO ACTIONS MENU -->
-    <!-- ============================================ -->
     <div class="video-actions-overlay" id="videoActionsOverlay"></div>
     <div class="video-actions-menu" id="videoActionsMenu">
       <div class="video-actions-header">
@@ -794,9 +998,7 @@
       </div>
     </div>
 
-    <!-- ============================================ -->
     <!-- EDIT VIDEO PAGE -->
-    <!-- ============================================ -->
     <div class="edit-video-page" id="editVideoPage">
       <div class="metadata-header">
         <button class="back-btn" id="editVideoBackBtn"><i class="fas fa-arrow-left"></i></button>
@@ -844,9 +1046,7 @@
       </div>
     </div>
 
-    <!-- ============================================ -->
     <!-- TERMS & PRIVACY PAGE -->
-    <!-- ============================================ -->
     <div class="terms-page" id="termsPage">
       <div class="profile-header-bar">
         <button class="back-btn" id="termsBackBtn"><i class="fas fa-arrow-left"></i></button>
@@ -857,12 +1057,10 @@
           <h2>1. Acceptance of Terms</h2>
           <p>By using ForTube, you agree to these Terms of Service. If you do not agree, please do not use our platform. We may update these terms from time to time, and continued use means you accept any changes.</p>
         </div>
-
         <div class="terms-section">
           <h2>2. User Accounts</h2>
           <p>You are responsible for maintaining the confidentiality of your account credentials. You must be at least 13 years old to use ForTube. You agree to provide accurate information and to keep your account secure.</p>
         </div>
-
         <div class="terms-section">
           <h2>3. Content Guidelines</h2>
           <p>You may not upload content that is:</p>
@@ -874,12 +1072,10 @@
             <li>Spam or misleading</li>
           </ul>
         </div>
-
         <div class="terms-section">
           <h2>4. Content Ownership</h2>
           <p>You retain ownership of videos you upload. By uploading, you grant ForTube a license to display, distribute, and promote your content on the platform. You confirm you have rights to all uploaded content.</p>
         </div>
-
         <div class="terms-section">
           <h2>5. Privacy Policy</h2>
           <p>We collect minimal data to provide our service:</p>
@@ -891,27 +1087,22 @@
           </ul>
           <p>We do not sell your personal information to third parties. Your data is stored securely using Supabase infrastructure.</p>
         </div>
-
         <div class="terms-section">
           <h2>6. Monetization</h2>
-          <p>To be eligible for monetization, you must meet our criteria: 1,000 views, 4,000 watch hours, and 1,000 subscribers. Revenue is calculated at $0.50 per 1,000 qualified views. Withdrawals are subject to admin review.</p>
+          <p>To be eligible for monetization, you must meet our criteria: 1,000 views, 4,000 watch hours, and 1,000 subscribers. <strong>Revenue is calculated at $1 per 500 subscribers and $0.50 per 1,000 watch hours.</strong> Withdrawals are subject to admin review. Minimum withdrawal amount is $1.00.</p>
         </div>
-
         <div class="terms-section">
           <h2>7. Content Moderation</h2>
           <p>We reserve the right to remove any content that violates these terms. Accounts that repeatedly violate guidelines may be suspended or terminated without notice.</p>
         </div>
-
         <div class="terms-section">
           <h2>8. Termination</h2>
           <p>You may delete your account at any time. We may terminate accounts that violate our terms. Upon termination, your videos will be removed from public view.</p>
         </div>
-
         <div class="terms-section">
           <h2>9. Disclaimer</h2>
           <p>ForTube is provided "as is" without warranties. We are not liable for any content uploaded by users or any damages arising from platform use.</p>
         </div>
-
         <div class="terms-section">
           <h2>10. Contact</h2>
           <p>For any questions about these terms, contact us at <strong>syedtechnical63@gmail.com</strong></p>
@@ -919,9 +1110,7 @@
       </div>
     </div>
 
-    <!-- ============================================ -->
     <!-- SUPPORT / CHAT PAGE -->
-    <!-- ============================================ -->
     <div class="support-page" id="supportPage">
       <div class="profile-header-bar">
         <button class="back-btn" id="supportBackBtn"><i class="fas fa-arrow-left"></i></button>
@@ -941,9 +1130,9 @@
             <div class="support-text">You can ask me about:</div>
             <div class="support-quick">
               <button class="quick-btn" data-msg="How to upload video?">How to upload video?</button>
+              <button class="quick-btn" data-msg="How to go live?">How to go live?</button>
               <button class="quick-btn" data-msg="Monetization requirements">Monetization requirements</button>
               <button class="quick-btn" data-msg="Video not playing">Video not playing</button>
-              <button class="quick-btn" data-msg="Account issue">Account issue</button>
             </div>
             <div class="support-time">Just now</div>
           </div>
