@@ -1,13 +1,20 @@
 /* ============================================================
-   FORTUBE - MAIN SCRIPT (v8 - ALL ERRORS FIXED)
-   Login: Random email/password works
-   Video: Click works properly
-   Audio: Works in all browsers
+   FORTUBE v14 - FINAL (Analytics Graph + All Fixes)
    ============================================================ */
 
 const SUPABASE_URL = "https://eaxstlpltwgpmaupgcwq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_sfcTaBDwgGM8ccmMfwP_ig_A6jTZ8w7";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const AGORA_APP_ID = "e84b0914baa44e8c878fb68ade1d804e";
+const ADMIN_EMAILS = ["syedtechnical63@gmail.com"];
+
+// 💰 REVENUE RATES
+const REVENUE_PER_500_SUBS = 1.00;          // $1 per 500 subscribers
+const REVENUE_PER_1000_HOURS = 0.50;        // $0.50 per 1000 watch hours
+const REVENUE_PER_1000_VIEWS = 0.07;        // $0.07 per 1000 views ← NEW
+const REVENUE_PER_VIEW = REVENUE_PER_1000_VIEWS / 1000; // $0.00007
+const MIN_WITHDRAWAL = 1.00;
 
 // ==================== INDEXEDDB ====================
 const IDB_NAME = 'fortube_videos_db';
@@ -76,6 +83,14 @@ const state = {
   allVideos: [],
   notifications: [],
   subscriptions: [],
+  activeLiveStream: null,
+  agoraClient: null,
+  agoraTracks: [],
+  liveStartTime: null,
+  liveDurationInterval: null,
+  currentWatchStartTime: null,
+  currentWatchingVideoId: null,
+  chartInstance: null,
   preferences: {
     language: 'English',
     region: 'Global',
@@ -240,6 +255,7 @@ const plusMenuOverlay = $('plusMenuOverlay');
 const plusUploadBtn = $('plusUploadBtn');
 const plusShortBtn = $('plusShortBtn');
 const plusLiveBtn = $('plusLiveBtn');
+const liveSubsBadge = $('liveSubsBadge');
 const notificationsPage = $('notificationsPage');
 const notificationsBackBtn = $('notificationsBackBtn');
 const notificationsBody = $('notificationsBody');
@@ -275,8 +291,55 @@ const supportBody = $('supportBody');
 const supportInput = $('supportInput');
 const supportSendBtn = $('supportSendBtn');
 
+const liveSetupModal = $('liveSetupModal');
+const liveSetupBackBtn = $('liveSetupBackBtn');
+const liveSetupCancelBtn = $('liveSetupCancelBtn');
+const livePreviewVideo = $('livePreviewVideo');
+const liveTitle = $('liveTitle');
+const liveDescription = $('liveDescription');
+const liveCategory = $('liveCategory');
+const liveTagInput = $('liveTagInput');
+const liveAddTagBtn = $('liveAddTagBtn');
+const liveTagsContainer = $('liveTagsContainer');
+const liveStartBtn = $('liveStartBtn');
+const liveStreamPage = $('liveStreamPage');
+const liveBroadcastContainer = $('liveBroadcastContainer');
+const liveViewerCount = $('liveViewerCount');
+const liveEndBtn = $('liveEndBtn');
+const liveStreamTitle = $('liveStreamTitle');
+const liveStreamChannel = $('liveStreamChannel');
+const liveStreamDuration = $('liveStreamDuration');
+const liveWatchPage = $('liveWatchPage');
+const liveWatchBackBtn = $('liveWatchBackBtn');
+const liveWatchHeaderTitle = $('liveWatchHeaderTitle');
+const liveWatchContainer = $('liveWatchContainer');
+const liveWatchViewers = $('liveWatchViewers');
+const liveWatchTitle = $('liveWatchTitle');
+const liveWatchChannel = $('liveWatchChannel');
+const liveWatchDuration = $('liveWatchDuration');
+const liveWatchChannelIcon = $('liveWatchChannelIcon');
+const liveWatchChannelInfo = $('liveWatchChannelInfo');
+const liveWatchChannelName = $('liveWatchChannelName');
+const liveWatchSubsCount = $('liveWatchSubsCount');
+const liveWatchSubBtn = $('liveWatchSubBtn');
+const liveLikeBtn = $('liveLikeBtn');
+const liveLikeCount = $('liveLikeCount');
+const liveShareBtn = $('liveShareBtn');
+const liveWatchDesc = $('liveWatchDesc');
+
 let currentEditVideoId = null;
 let currentEditThumbnailData = null;
+let currentUploadType = 'short';
+let pendingUpload = null;
+let metaTags = [];
+let metaVisibility = 'public';
+let selectedThumbnailData = null;
+let currentVideoBlobUrl = null;
+let currentFilter = 'home';
+let liveTags = [];
+let liveVisibility = 'public';
+let previewStream = null;
+let currentWatchingLive = null;
 
 // ==================== HELPERS ====================
 function showToast(msg) {
@@ -297,6 +360,14 @@ function formatTime(sec) {
   return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
+function formatDuration(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
 function showAlert(title, message, icon = 'fa-broadcast-tower') {
   if (!alertPopup) return;
   alertTitle.textContent = title;
@@ -306,70 +377,222 @@ function showAlert(title, message, icon = 'fa-broadcast-tower') {
   alertPopup.classList.add('active');
 }
 
-// ============================================================
-// AUTO-GENERATE THUMBNAIL
-// ============================================================
-async function generateThumbnailFromVideo(videoBlob, seekTime = 1) {
-  return new Promise((resolve, reject) => {
-    try {
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.muted = true;
-      video.playsInline = true;
-      const url = URL.createObjectURL(videoBlob);
-      video.src = url;
+function generateLiveChannelName() {
+  return 'live_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
 
-      let done = false;
-      const finish = (result, err) => {
-        if (done) return;
-        done = true;
-        URL.revokeObjectURL(url);
-        if (err) reject(err);
-        else resolve(result);
-      };
-
-      video.onloadedmetadata = () => {
-        const duration = video.duration;
-        const seek = Math.min(seekTime, duration * 0.1) || 0.5;
-        video.currentTime = seek;
-      };
-
-      video.onseeked = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          let w = video.videoWidth || 640;
-          let h = video.videoHeight || 360;
-          const maxDim = 1280;
-          if (w > maxDim || h > maxDim) {
-            if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
-            else { w = Math.round(w * maxDim / h); h = maxDim; }
-          }
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          finish(dataUrl);
-        } catch (err) {
-          finish(null, err);
-        }
-      };
-
-      video.onerror = () => finish(null, new Error('Video load failed'));
-      setTimeout(() => finish(null, new Error('Thumbnail timeout')), 15000);
-    } catch (err) {
-      reject(err);
-    }
-  });
+function isUserAdmin() {
+  return state.email && ADMIN_EMAILS.includes(state.email.toLowerCase());
 }
 
 // ============================================================
-// VIDEO COMPRESSION WITH AUDIO
+// 💰 REVENUE CALCULATION
+// ============================================================
+function calculateRevenue(subscribers, watchHours, totalViews) {
+  const subRevenue = (subscribers / 500) * REVENUE_PER_500_SUBS;
+  const watchRevenue = (watchHours / 1000) * REVENUE_PER_1000_HOURS;
+  const viewBonus = totalViews * 0.00001;
+  
+  return {
+    subRevenue: subRevenue,
+    watchRevenue: watchRevenue,
+    viewBonus: viewBonus,
+    total: subRevenue + watchRevenue + viewBonus
+  };
+}
+
+// ============================================================
+// 📊 ANALYTICS GRAPH - YouTube Style Line Chart
+// ============================================================
+function renderAnalyticsChart(views, watchHours, subs) {
+  const canvas = document.getElementById('analyticsChart');
+  if (!canvas) {
+    console.log('⚠️ Analytics chart canvas not found');
+    return;
+  }
+  
+  const ctx = canvas.getContext('2d');
+  
+  // Destroy existing chart
+  if (state.chartInstance) {
+    state.chartInstance.destroy();
+    state.chartInstance = null;
+  }
+  
+  // Generate last 7 days data (simulated growth)
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const today = new Date().getDay();
+  
+  // Simulate growth curve (based on current totals)
+  const viewsData = generateGrowthData(views, 7);
+  const watchData = generateGrowthData(watchHours, 7);
+  const subsData = generateGrowthData(subs, 7);
+  
+  // Get last 7 days labels
+  const labels = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    labels.push(d.toLocaleDateString('en', { month: 'short', day: 'numeric' }));
+  }
+  
+  // Setup canvas dimensions
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  
+  const width = rect.width;
+  const height = rect.height;
+  const padding = { top: 20, right: 20, bottom: 40, left: 40 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  
+  // Clear canvas
+  ctx.clearRect(0, 0, width, height);
+  
+  // Find max value for scaling
+  const allValues = [...viewsData, ...watchData, ...subsData];
+  const maxValue = Math.max(...allValues, 1);
+  
+  // Draw grid lines
+  ctx.strokeStyle = '#e0e8f0';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padding.top + (chartHeight / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(width - padding.right, y);
+    ctx.stroke();
+  }
+  
+  // Draw X-axis labels
+  ctx.fillStyle = '#8aa9b8';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  labels.forEach((label, i) => {
+    const x = padding.left + (chartWidth / 6) * i;
+    ctx.fillText(label, x, height - 15);
+  });
+  
+  // Draw Y-axis labels
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const value = Math.round(maxValue - (maxValue / 4) * i);
+    const y = padding.top + (chartHeight / 4) * i;
+    ctx.fillText(value.toString(), padding.left - 5, y + 4);
+  }
+  
+  // Function to draw a line
+  function drawLine(data, color, fillColor) {
+    // Draw fill area
+    ctx.beginPath();
+    ctx.moveTo(padding.left, padding.top + chartHeight);
+    data.forEach((value, i) => {
+      const x = padding.left + (chartWidth / 6) * i;
+      const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
+      ctx.lineTo(x, y);
+    });
+    ctx.lineTo(padding.left + chartWidth, padding.top + chartHeight);
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    
+    // Draw line
+    ctx.beginPath();
+    data.forEach((value, i) => {
+      const x = padding.left + (chartWidth / 6) * i;
+      const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    
+    // Draw dots
+    data.forEach((value, i) => {
+      const x = padding.left + (chartWidth / 6) * i;
+      const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+  }
+  
+  // Draw lines (views, watch, subs)
+  drawLine(viewsData, '#1e8b4b', 'rgba(30, 139, 75, 0.1)');
+  drawLine(watchData, '#1c7aa3', 'rgba(28, 122, 163, 0.1)');
+  drawLine(subsData, '#d97706', 'rgba(217, 119, 6, 0.1)');
+}
+
+// Generate growth data for last 7 days
+function generateGrowthData(currentTotal, days) {
+  const data = [];
+  const increment = currentTotal / (days + 3);
+  for (let i = 0; i < days; i++) {
+    data.push(Math.max(0, Math.round(increment * (i + 1) + (Math.random() * increment * 0.3 - increment * 0.15))));
+  }
+  return data;
+}
+
+// ============================================================
+// PASSWORD RESET
+// ============================================================
+async function resetPassword(email) {
+  try {
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email);
+    if (error) throw error;
+    showToast('📧 Password reset link sent to ' + email);
+    return true;
+  } catch (e) {
+    showToast('❌ ' + e.message);
+    return false;
+  }
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+async function createNotification(userId, message, type = 'info') {
+  try {
+    await supabaseClient.from('notifications').insert({
+      user_id: userId,
+      message: message,
+      type: type
+    });
+  } catch (e) {}
+}
+
+// ============================================================
+// iOS AUDIO UNLOCK
+// ============================================================
+function unlockAudioContext() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => setTimeout(() => ctx.close(), 100));
+    } else {
+      ctx.close();
+    }
+  } catch (e) {}
+}
+
+document.addEventListener('touchstart', unlockAudioContext, { once: true });
+document.addEventListener('click', unlockAudioContext, { once: true });
+
+// ============================================================
+// VIDEO COMPRESSION
 // ============================================================
 async function compressVideo(inputBlob, maxSizeMB = 40) {
   return new Promise(async (resolve) => {
-    console.log('🎬 Compression start. Original:', (inputBlob.size / 1024 / 1024).toFixed(1), 'MB');
-    
     try {
       const video = document.createElement('video');
       video.preload = 'metadata';
@@ -388,7 +611,6 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
       });
 
       const duration = video.duration;
-
       if (!isFinite(duration) || duration <= 0) {
         URL.revokeObjectURL(url);
         return resolve(inputBlob);
@@ -415,14 +637,12 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
 
       let audioCtx = null;
       try {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-        }
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
 
         const source = audioCtx.createMediaElementSource(video);
         const dest = audioCtx.createMediaStreamDestination();
-        
         source.connect(dest);
         const silentGain = audioCtx.createGain();
         silentGain.gain.value = 0;
@@ -430,30 +650,14 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
         silentGain.connect(audioCtx.destination);
 
         const audioTracks = dest.stream.getAudioTracks();
-        console.log('🔊 Audio tracks captured:', audioTracks.length);
-
-        if (audioTracks.length > 0) {
-          audioTracks.forEach(track => stream.addTrack(track));
-          console.log('✅ Audio added to stream');
-        }
-      } catch (e) {
-        console.error('❌ Audio capture failed:', e.message);
-      }
+        if (audioTracks.length > 0) audioTracks.forEach(t => stream.addTrack(t));
+      } catch (e) {}
 
       let mimeType = 'video/webm;codecs=vp8,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm;codecs=vp9,opus';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm;codecs=vp8';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/mp4';
-      }
-      console.log('📦 Mime type:', mimeType);
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
 
       const recorder = new MediaRecorder(stream, {
         mimeType: mimeType,
@@ -462,29 +666,17 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
       });
 
       const chunks = [];
-      recorder.ondataavailable = e => { 
-        if (e.data && e.data.size > 0) chunks.push(e.data); 
-      };
+      recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
 
       const finish = () => {
         URL.revokeObjectURL(url);
-        if (audioCtx) {
-          try { audioCtx.close(); } catch (e) {}
-        }
-        if (chunks.length === 0) {
-          console.warn('⚠️ No chunks, returning original');
-          return resolve(inputBlob);
-        }
-        const compressed = new Blob(chunks, { type: mimeType });
-        console.log('✅ Compressed:', (compressed.size / 1024 / 1024).toFixed(1), 'MB');
-        resolve(compressed);
+        if (audioCtx) { try { audioCtx.close(); } catch (e) {} }
+        if (chunks.length === 0) return resolve(inputBlob);
+        resolve(new Blob(chunks, { type: mimeType }));
       };
 
       recorder.onstop = finish;
-      recorder.onerror = (e) => {
-        console.error('Recorder error:', e);
-        finish();
-      };
+      recorder.onerror = () => finish();
 
       let animId;
       const draw = () => {
@@ -496,9 +688,7 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
       video.onplay = () => draw();
       video.onended = () => {
         cancelAnimationFrame(animId);
-        setTimeout(() => {
-          if (recorder.state !== 'inactive') recorder.stop();
-        }, 300);
+        setTimeout(() => { if (recorder.state !== 'inactive') recorder.stop(); }, 300);
       };
 
       recorder.start(1000);
@@ -507,7 +697,6 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
         video.currentTime = 0;
         await video.play();
       } catch (playErr) {
-        console.error('Play failed:', playErr);
         video.muted = true;
         try { await video.play(); } catch (e) {
           if (recorder.state !== 'inactive') recorder.stop();
@@ -517,20 +706,70 @@ async function compressVideo(inputBlob, maxSizeMB = 40) {
       const safetyTime = Math.max(duration * 3000, 60000);
       setTimeout(() => {
         if (recorder.state !== 'inactive') {
-          console.warn('⚠️ Compression timeout');
           cancelAnimationFrame(animId);
           recorder.stop();
         }
       }, safetyTime);
 
     } catch (err) {
-      console.error('❌ Compression failed:', err);
       resolve(inputBlob);
     }
   });
 }
 
-// ==================== AUTH (RANDOM EMAIL/PASSWORD) ====================
+// ============================================================
+// THUMBNAIL GENERATOR
+// ============================================================
+async function generateThumbnailFromVideo(videoBlob, seekTime = 1) {
+  return new Promise((resolve, reject) => {
+    try {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      const url = URL.createObjectURL(videoBlob);
+      video.src = url;
+
+      let done = false;
+      const finish = (result, err) => {
+        if (done) return;
+        done = true;
+        URL.revokeObjectURL(url);
+        if (err) reject(err);
+        else resolve(result);
+      };
+
+      video.onloadedmetadata = () => {
+        const seek = Math.min(seekTime, video.duration * 0.1) || 0.5;
+        video.currentTime = seek;
+      };
+
+      video.onseeked = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          let w = video.videoWidth || 640;
+          let h = video.videoHeight || 360;
+          const maxDim = 1280;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+            else { w = Math.round(w * maxDim / h); h = maxDim; }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+          finish(canvas.toDataURL('image/jpeg', 0.85));
+        } catch (err) { finish(null, err); }
+      };
+
+      video.onerror = () => finish(null, new Error('Video load failed'));
+      setTimeout(() => finish(null, new Error('Thumbnail timeout')), 15000);
+    } catch (err) { reject(err); }
+  });
+}
+
+// ============================================================
+// AUTH
+// ============================================================
 async function checkSession() {
   try {
     const { data: { session } } = await supabaseClient.auth.getSession();
@@ -543,11 +782,11 @@ async function checkSession() {
       updateUI();
       await loadFeedFromSupabase();
       await loadNotifications();
+      await checkActiveLiveStream();
     } else {
       if (loginGate) loginGate.classList.remove('hide');
     }
   } catch (e) {
-    console.error('Session check failed:', e);
     if (loginGate) loginGate.classList.remove('hide');
   }
 }
@@ -562,45 +801,41 @@ async function loadUserChannel() {
       .maybeSingle();
     state.channel = data || null;
   } catch (e) {
-    console.error('Channel load error:', e);
     state.channel = null;
   }
 }
 
-// ============================================================
-// LOGIN - RANDOM EMAIL/PASSWORD SUPPORT
-// ============================================================
+async function checkActiveLiveStream() {
+  if (!state.channel) return;
+  try {
+    const { data } = await supabaseClient
+      .from('live_streams')
+      .select('*')
+      .eq('channel_id', state.channel.id)
+      .eq('is_active', true)
+      .maybeSingle();
+    
+    if (data) state.activeLiveStream = data;
+  } catch (e) {}
+}
+
+// ==================== LOGIN ====================
 if (gateLoginBtn) {
   gateLoginBtn.addEventListener('click', async () => {
     const email = gateEmail.value.trim();
     const pass = gatePassword.value.trim();
     
-    if (!email || !email.includes('@')) { 
-      showToast('Valid email enter karein'); 
-      return; 
-    }
-    if (!pass || pass.length < 1) { 
-      showToast('Password enter karein'); 
-      return; 
-    }
+    if (!email || !email.includes('@')) { showToast('Valid email enter karein'); return; }
+    if (!pass || pass.length < 6) { showToast('Password min 6 characters'); return; }
 
     gateLoginBtn.disabled = true;
     gateLoginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Please wait...';
 
     try {
-      // STEP 1: Try login
-      let { data, error } = await supabaseClient.auth.signInWithPassword({ 
-        email, 
-        password: pass 
-      });
+      let { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pass });
 
-      // STEP 2: If login fails, try signup
       if (error) {
-        console.log('Login failed, trying signup...');
-        const signup = await supabaseClient.auth.signUp({ 
-          email, 
-          password: pass 
-        });
+        const signup = await supabaseClient.auth.signUp({ email, password: pass });
         
         if (signup.error) {
           showToast('❌ ' + signup.error.message);
@@ -611,27 +846,19 @@ if (gateLoginBtn) {
         
         data = signup.data;
         
-        // STEP 3: If no session (email confirmation needed), try login again
         if (!signup.data.session) {
-          console.log('No session from signup, trying login...');
-          const retry = await supabaseClient.auth.signInWithPassword({ 
-            email, 
-            password: pass 
-          });
-          
+          const retry = await supabaseClient.auth.signInWithPassword({ email, password: pass });
           if (retry.error) {
-            showToast('📧 Supabase → Auth → Providers → Email → Confirm email OFF karein');
+            showToast('📧 Email confirm karein');
             gateLoginBtn.disabled = false;
             gateLoginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login / Sign Up';
             return;
           }
           data = retry.data;
         }
-        
         showToast('✅ Account created!');
       }
 
-      // STEP 4: Logged in successfully
       if (data && data.user) {
         state.loggedIn = true;
         state.user = data.user;
@@ -642,10 +869,10 @@ if (gateLoginBtn) {
         updateUI();
         await loadFeedFromSupabase();
         await loadNotifications();
+        await checkActiveLiveStream();
       }
 
     } catch (err) {
-      console.error('Login error:', err);
       showToast('❌ ' + err.message);
     }
 
@@ -654,15 +881,23 @@ if (gateLoginBtn) {
   });
 }
 
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'forgotPasswordLink') {
+    e.preventDefault();
+    const email = gateEmail.value.trim();
+    if (!email || !email.includes('@')) {
+      showToast('Pehle email enter karein');
+      return;
+    }
+    resetPassword(email);
+  }
+});
+
 if (gatePassword) {
-  gatePassword.addEventListener('keydown', e => { 
-    if (e.key === 'Enter') gateLoginBtn.click(); 
-  });
+  gatePassword.addEventListener('keydown', e => { if (e.key === 'Enter') gateLoginBtn.click(); });
 }
 if (gateEmail) {
-  gateEmail.addEventListener('keydown', e => { 
-    if (e.key === 'Enter') gatePassword.focus(); 
-  });
+  gateEmail.addEventListener('keydown', e => { if (e.key === 'Enter') gatePassword.focus(); });
 }
 
 // ==================== LOGOUT ====================
@@ -694,10 +929,7 @@ async function loadFeedFromSupabase() {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) { 
-      console.error('Feed error:', error); 
-      return; 
-    }
+    if (error) return;
     state.allVideos = videos || [];
 
     const { data: channels } = await supabaseClient.from('channels').select('*');
@@ -712,12 +944,8 @@ async function loadFeedFromSupabase() {
     }
 
     renderFeed('', currentFilter);
-  } catch (e) {
-    console.error('Feed load error:', e);
-  }
+  } catch (e) {}
 }
-
-let currentFilter = 'home';
 
 function renderFeed(filterText = '', categoryFilter = null) {
   if (!feed) return;
@@ -726,44 +954,36 @@ function renderFeed(filterText = '', categoryFilter = null) {
 
   let sourceVideos = [...state.allVideos];
 
-  if (cat === 'home') {
-    sourceVideos = sourceVideos.filter(v => v.type !== 'short' && !v.is_live);
-  } else if (cat === 'shorts') {
-    sourceVideos = sourceVideos.filter(v => v.type === 'short');
-  } else if (cat === 'subs') {
-    if (!state.subscriptions.length) {
-      sourceVideos = [];
-    } else {
-      sourceVideos = sourceVideos.filter(v => {
-        const ch = state.allChannels.find(c => c.username === v.channel_username);
-        return ch && state.subscriptions.includes(ch.id);
-      });
-    }
-  } else if (cat === 'gaming') {
-    sourceVideos = sourceVideos.filter(v => v.category === 'Gaming');
-  } else if (cat === 'sports') {
-    sourceVideos = sourceVideos.filter(v => v.category === 'Sports');
-  } else if (cat === 'music') {
-    sourceVideos = sourceVideos.filter(v => v.category === 'Music');
-  } else if (cat === 'news') {
-    sourceVideos = sourceVideos.filter(v => v.category === 'News');
-  } else if (cat === 'trending') {
-    sourceVideos = sourceVideos.sort((a, b) => (b.views || 0) - (a.views || 0));
-  } else if (cat === 'yourvideos') {
-    sourceVideos = sourceVideos.filter(v => v.owner_id === state.user?.id);
+  if (cat === 'home') sourceVideos = sourceVideos.filter(v => v.type !== 'short' && !v.is_live);
+  else if (cat === 'shorts') sourceVideos = sourceVideos.filter(v => v.type === 'short');
+  else if (cat === 'live') sourceVideos = sourceVideos.filter(v => v.is_live === true);
+  else if (cat === 'subs') {
+    if (!state.subscriptions.length) sourceVideos = [];
+    else sourceVideos = sourceVideos.filter(v => {
+      const ch = state.allChannels.find(c => c.username === v.channel_username);
+      return ch && state.subscriptions.includes(ch.id);
+    });
   }
+  else if (cat === 'gaming') sourceVideos = sourceVideos.filter(v => v.category === 'Gaming');
+  else if (cat === 'sports') sourceVideos = sourceVideos.filter(v => v.category === 'Sports');
+  else if (cat === 'music') sourceVideos = sourceVideos.filter(v => v.category === 'Music');
+  else if (cat === 'news') sourceVideos = sourceVideos.filter(v => v.category === 'News');
+  else if (cat === 'trending') sourceVideos = sourceVideos.sort((a, b) => (b.views || 0) - (a.views || 0));
+  else if (cat === 'yourvideos') sourceVideos = sourceVideos.filter(v => v.owner_id === state.user?.id);
 
   if (filterText.trim()) {
     const q = filterText.toLowerCase();
     sourceVideos = sourceVideos.filter(v =>
       v.title.toLowerCase().includes(q) ||
-      (v.description && v.description.toLowerCase().includes(q))
+      (v.description && v.description.toLowerCase().includes(q)) ||
+      (v.tags && v.tags.some(t => t.toLowerCase().includes(q)))
     );
   }
 
   const titleMap = {
     home: '<i class="fas fa-home"></i> Home',
     shorts: '<i class="fas fa-bolt"></i> Shorts',
+    live: '<i class="fas fa-broadcast-tower"></i> Live Now',
     subs: '<i class="fas fa-users"></i> Subscriptions',
     gaming: '<i class="fas fa-gamepad"></i> Gaming',
     sports: '<i class="fas fa-futbol"></i> Sports',
@@ -777,13 +997,7 @@ function renderFeed(filterText = '', categoryFilter = null) {
   if (sourceVideos.length === 0) {
     if (emptyFeed) {
       emptyFeed.style.display = 'flex';
-      if (cat === 'subs') {
-        emptyFeed.innerHTML = `<i class="fas fa-users"></i><h3>No subscriptions</h3><p>Subscribe to channels to see their videos here.</p>`;
-      } else if (cat === 'shorts') {
-        emptyFeed.innerHTML = `<i class="fas fa-bolt"></i><h3>No shorts yet</h3><p>Upload short videos to see them here!</p>`;
-      } else {
-        emptyFeed.innerHTML = `<i class="fas fa-video"></i><h3>No videos yet</h3><p>Tap + to upload your first video!</p>`;
-      }
+      emptyFeed.innerHTML = `<i class="fas fa-video"></i><h3>No videos yet</h3><p>Tap + to upload your first video!</p>`;
     }
     return;
   }
@@ -807,7 +1021,7 @@ function renderFeed(filterText = '', categoryFilter = null) {
       ? `<img src="${vid.thumbnail_url}" style="width:100%;height:100%;object-fit:cover;">`
       : `<i class="fas fa-play-circle" style="font-size:3.8rem; color:#ffffffcc;"></i>`;
 
-    const menuBtnHTML = isMine ? `<button class="my-video-menu-btn" data-mymenu="${vid.id}"><i class="fas fa-ellipsis-v"></i></button>` : '';
+    const menuBtnHTML = isMine && !isLive ? `<button class="my-video-menu-btn" data-mymenu="${vid.id}"><i class="fas fa-ellipsis-v"></i></button>` : '';
 
     card.innerHTML = `
       <div class="thumbnail-box">
@@ -831,18 +1045,15 @@ function renderFeed(filterText = '', categoryFilter = null) {
       </div>
     `;
 
-    // ===== FIXED CLICK HANDLER =====
     card.addEventListener('click', (e) => {
-      console.log('🎬 Video card clicked:', vid.title);
-      
       if (e.target.closest('.my-video-menu-btn')) {
         e.stopPropagation();
         e.preventDefault();
         openVideoActions(vid);
         return;
       }
-      
-      openWatchPage(vid);
+      if (isLive) openLiveWatch(vid);
+      else openWatchPage(vid);
     });
 
     feed.appendChild(card);
@@ -850,33 +1061,18 @@ function renderFeed(filterText = '', categoryFilter = null) {
 }
 
 // ============================================================
-// WATCH PAGE (FIXED)
+// 🔥 WATCH PAGE - View + Watch Time Tracking
 // ============================================================
 async function openWatchPage(vid) {
-  console.log('🎬 Opening watch page for:', vid.title);
-  
-  if (!vid) {
-    showToast('❌ Video data missing');
-    return;
-  }
-  
-  if (!watchPage || !watchBody) {
-    console.error('❌ watchPage or watchBody element not found!');
-    showToast('❌ Watch page missing in HTML');
-    return;
-  }
-
+  if (!vid || !watchPage || !watchBody) return;
   if (watchHeaderTitle) watchHeaderTitle.textContent = vid.title;
 
   let videoUrl = vid.video_url;
-  console.log('📹 Video URL:', videoUrl);
 
-  // Try cache first
   try {
     const cachedBlob = await getVideoFromIDB(vid.id);
     if (cachedBlob) {
       videoUrl = URL.createObjectURL(cachedBlob);
-      console.log('✅ Loaded from cache');
     } else if (vid.video_url) {
       try {
         const resp = await fetch(vid.video_url);
@@ -884,44 +1080,31 @@ async function openWatchPage(vid) {
           const blob = await resp.blob();
           await saveVideoToIDB(vid.id, blob);
           videoUrl = URL.createObjectURL(blob);
-          console.log('✅ Fetched and cached');
         }
-      } catch (e) { 
-        console.warn('Fetch failed, using direct URL');
-        videoUrl = vid.video_url; 
+      } catch (e) {
+        videoUrl = vid.video_url;
       }
     }
-  } catch (e) {
-    console.error('Cache error:', e);
-  }
+  } catch (e) {}
 
   const ch = state.allChannels.find(c => c.username === vid.channel_username) || {};
   const isMine = vid.owner_id === state.user?.id;
   const chId = ch.id;
-
   const chAvatarHTML = ch.avatar_url
     ? `<img src="${ch.avatar_url}" style="width:100%;height:100%;object-fit:cover;">`
     : (ch.avatar_emoji || '👤');
 
   let isSubscribed = state.subscriptions.includes(chId);
-
-  let videoHTML = '';
-  if (videoUrl) {
-    videoHTML = `<video src="${videoUrl}" controls autoplay playsinline preload="metadata"></video>`;
-    console.log('✅ Video element created');
-  } else {
-    videoHTML = `<i class="fas fa-play-circle"></i>`;
-    console.warn('⚠️ No video URL available');
-  }
+  let videoHTML = videoUrl
+    ? `<video src="${videoUrl}" controls autoplay playsinline preload="metadata" id="watchVideoElement"></video>`
+    : `<i class="fas fa-play-circle"></i>`;
 
   watchBody.innerHTML = `
-    <div class="watch-video-area">
-      ${videoHTML}
-    </div>
+    <div class="watch-video-area">${videoHTML}</div>
     <div class="watch-info">
       <div class="watch-title">${escapeHTML(vid.title)}</div>
       <div class="watch-meta">
-        <span><i class="fas fa-eye"></i> ${vid.views || 0} views</span>
+        <span><i class="fas fa-eye"></i> <span id="watchViewCount">${vid.views || 0}</span> views</span>
         <span><i class="fas fa-user"></i> ${escapeHTML(ch.name || 'Unknown')}</span>
       </div>
       <div class="watch-channel-row">
@@ -953,18 +1136,56 @@ async function openWatchPage(vid) {
     </div>
   `;
 
-  // Increment views
-  if (vid.owner_id !== state.user?.id) {
+  // 🔥 VIEW COUNT + WATCH TIME (sirf doosre users ke liye)
+  if (state.user && vid.owner_id !== state.user.id) {
     try {
+      console.log('👁️ Other user watching - incrementing view');
       const newViews = (vid.views || 0) + 1;
-      await supabaseClient.from('videos').update({ views: newViews }).eq('id', vid.id);
-      vid.views = newViews;
-    } catch (e) { console.warn('View increment failed'); }
+      const { error } = await supabaseClient
+        .from('videos')
+        .update({ views: newViews })
+        .eq('id', vid.id);
+      
+      if (!error) {
+        vid.views = newViews;
+        const viewEl = document.getElementById('watchViewCount');
+        if (viewEl) viewEl.textContent = newViews;
+        console.log('✅ View incremented:', newViews);
+      }
+    } catch (e) {
+      console.warn('View increment failed:', e);
+    }
+
+    // 🔥 WATCH TIME TRACKING START
+    state.currentWatchStartTime = Date.now();
+    state.currentWatchingVideoId = vid.id;
+    
+    const videoEl = document.getElementById('watchVideoElement');
+    if (videoEl) {
+      const watchTimeInterval = setInterval(async () => {
+        if (!state.currentWatchStartTime || state.currentWatchingVideoId !== vid.id) {
+          clearInterval(watchTimeInterval);
+          return;
+        }
+        
+        if (videoEl.paused || videoEl.ended || watchPage.classList.contains('open') === false) {
+          return;
+        }
+        
+        await addWatchTime(vid.id, 10);
+      }, 10000);
+      
+      videoEl.addEventListener('ended', async () => {
+        clearInterval(watchTimeInterval);
+        await saveWatchTimeNow(vid.id);
+      });
+    }
+  } else {
+    console.log('🚫 Own video - no view/watch-time count');
   }
 
   await loadComments(vid.id);
 
-  // Channel click
   document.getElementById('watchChannelIcon')?.addEventListener('click', () => {
     watchPage.classList.remove('open');
     openChannelView(vid.channel_username);
@@ -974,47 +1195,67 @@ async function openWatchPage(vid) {
     openChannelView(vid.channel_username);
   });
 
-  // Subscribe
   document.getElementById('subBtn')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget;
-    if (btn.classList.contains('subscribed')) {
-      await supabaseClient.from('subscriptions').delete().eq('user_id', state.user.id).eq('channel_id', chId);
-      const newCount = Math.max(0, (ch.subscribers_count || 1) - 1);
-      await supabaseClient.from('channels').update({ subscribers_count: newCount }).eq('id', chId);
-      btn.classList.remove('subscribed');
-      btn.innerHTML = '<i class="fas fa-plus"></i> Subscribe';
-      document.getElementById('watchSubsCount').textContent = newCount + ' subscribers';
-      state.subscriptions = state.subscriptions.filter(id => id !== chId);
-      showToast('Unsubscribed');
-    } else {
-      await supabaseClient.from('subscriptions').insert({ user_id: state.user.id, channel_id: chId });
-      const newCount = (ch.subscribers_count || 0) + 1;
-      await supabaseClient.from('channels').update({ subscribers_count: newCount }).eq('id', chId);
-      btn.classList.add('subscribed');
-      btn.innerHTML = '<i class="fas fa-check"></i> Subscribed';
-      document.getElementById('watchSubsCount').textContent = newCount + ' subscribers';
-      state.subscriptions.push(chId);
-      showToast('✅ Subscribed!');
+    if (!state.user) { showToast('Login required'); return; }
+    
+    btn.disabled = true;
+    
+    try {
+      if (btn.classList.contains('subscribed')) {
+        await supabaseClient.from('subscriptions').delete().eq('user_id', state.user.id).eq('channel_id', chId);
+        const newCount = Math.max(0, (ch.subscribers_count || 1) - 1);
+        await supabaseClient.from('channels').update({ subscribers_count: newCount }).eq('id', chId);
+        btn.classList.remove('subscribed');
+        btn.innerHTML = '<i class="fas fa-plus"></i> Subscribe';
+        const subsCountEl = document.getElementById('watchSubsCount');
+        if (subsCountEl) subsCountEl.textContent = newCount + ' subscribers';
+        state.subscriptions = state.subscriptions.filter(id => id !== chId);
+        showToast('Unsubscribed');
+      } else {
+        const { error } = await supabaseClient.from('subscriptions').insert({ 
+          user_id: state.user.id, 
+          channel_id: chId 
+        });
+        if (error) throw error;
+        
+        const newCount = (ch.subscribers_count || 0) + 1;
+        await supabaseClient.from('channels').update({ subscribers_count: newCount }).eq('id', chId);
+        btn.classList.add('subscribed');
+        btn.innerHTML = '<i class="fas fa-check"></i> Subscribed';
+        const subsCountEl = document.getElementById('watchSubsCount');
+        if (subsCountEl) subsCountEl.textContent = newCount + ' subscribers';
+        state.subscriptions.push(chId);
+        showToast('✅ Subscribed!');
+        
+        if (ch.owner_id && ch.owner_id !== state.user.id) {
+          await createNotification(ch.owner_id, `${state.channel?.name || 'Someone'} subscribed!`, 'subscribe');
+        }
+      }
+    } catch (err) {
+      console.error('Subscribe error:', err);
+      showToast('❌ ' + err.message);
     }
+    
+    btn.disabled = false;
   });
 
-  // Like
   document.getElementById('likeBtn')?.addEventListener('click', async () => {
     const newLikes = (vid.likes || 0) + 1;
     await supabaseClient.from('videos').update({ likes: newLikes }).eq('id', vid.id);
     document.getElementById('likeCount').textContent = newLikes;
     showToast('👍 Liked');
+    if (ch.owner_id && ch.owner_id !== state.user?.id) {
+      await createNotification(ch.owner_id, `${state.channel?.name || 'Someone'} liked "${vid.title}"`, 'like');
+    }
   });
 
-  // Share
   document.getElementById('shareBtn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(vid.video_url || window.location.href).then(() => showToast('🔗 Link copied'));
   });
 
-  // Save
   document.getElementById('saveBtn')?.addEventListener('click', () => showToast('📌 Saved'));
 
-  // Comment
   document.getElementById('commentSendBtn')?.addEventListener('click', async () => {
     const input = document.getElementById('commentInput');
     const text = input.value.trim();
@@ -1038,9 +1279,39 @@ async function openWatchPage(vid) {
     if (e.key === 'Enter') document.getElementById('commentSendBtn')?.click();
   });
 
-  // OPEN watch page
   watchPage.classList.add('open');
-  console.log('✅ Watch page opened');
+}
+
+// 🔥 WATCH TIME TRACKING FUNCTIONS
+async function addWatchTime(videoId, seconds) {
+  try {
+    const { data: video } = await supabaseClient
+      .from('videos')
+      .select('watch_time_seconds')
+      .eq('id', videoId)
+      .single();
+    
+    if (video) {
+      const newWatchTime = (video.watch_time_seconds || 0) + seconds;
+      await supabaseClient
+        .from('videos')
+        .update({ watch_time_seconds: newWatchTime })
+        .eq('id', videoId);
+      console.log('⏱️ Watch time added:', seconds, 'Total:', newWatchTime);
+    }
+  } catch (e) {
+    console.warn('Watch time add failed:', e);
+  }
+}
+
+async function saveWatchTimeNow(videoId) {
+  if (!state.currentWatchStartTime) return;
+  const elapsed = Math.floor((Date.now() - state.currentWatchStartTime) / 1000);
+  if (elapsed > 0) {
+    await addWatchTime(videoId, elapsed);
+  }
+  state.currentWatchStartTime = null;
+  state.currentWatchingVideoId = null;
 }
 
 async function loadComments(videoId) {
@@ -1055,10 +1326,7 @@ async function loadComments(videoId) {
       .eq('video_id', videoId)
       .order('created_at', { ascending: false });
 
-    if (error) { 
-      list.innerHTML = '<div class="no-comments">Comments load nahi hui</div>'; 
-      return; 
-    }
+    if (error) { list.innerHTML = '<div class="no-comments">Comments load nahi hui</div>'; return; }
     if (countEl) countEl.textContent = (data || []).length;
 
     if (!data || data.length === 0) {
@@ -1081,11 +1349,14 @@ async function loadComments(videoId) {
   }
 }
 
-if (watchBackBtn) watchBackBtn.addEventListener('click', () => watchPage.classList.remove('open'));
+if (watchBackBtn) watchBackBtn.addEventListener('click', async () => {
+  if (state.currentWatchingVideoId) {
+    await saveWatchTimeNow(state.currentWatchingVideoId);
+  }
+  watchPage.classList.remove('open');
+});
 
-// ============================================================
-// VIDEO ACTIONS (3-dot menu)
-// ============================================================
+// ==================== VIDEO ACTIONS ====================
 function openVideoActions(vid) {
   if (!vid) return;
   currentEditVideoId = vid.id;
@@ -1123,7 +1394,6 @@ if (vaPrivacyBtn) {
   vaPrivacyBtn.addEventListener('click', async () => {
     const vid = state.allVideos.find(v => v.id === currentEditVideoId);
     if (!vid) return;
-
     const current = vid.visibility || 'public';
     const next = current === 'public' ? 'unlisted' : (current === 'unlisted' ? 'private' : 'public');
     const labels = { public: 'Public', unlisted: 'Unlisted', private: 'Private' };
@@ -1142,7 +1412,6 @@ if (vaDeleteBtn) {
   vaDeleteBtn.addEventListener('click', async () => {
     const vid = state.allVideos.find(v => v.id === currentEditVideoId);
     if (!vid) return;
-
     if (!confirm(`Delete "${vid.title}"?\n\nThis cannot be undone.`)) return;
 
     vaDeleteBtn.style.pointerEvents = 'none';
@@ -1153,23 +1422,16 @@ if (vaDeleteBtn) {
       try {
         if (vid.video_url) {
           const parts = vid.video_url.split('/videos/');
-          if (parts[1]) {
-            await supabaseClient.storage.from('videos').remove([decodeURIComponent(parts[1])]);
-          }
+          if (parts[1]) await supabaseClient.storage.from('videos').remove([decodeURIComponent(parts[1])]);
         }
         if (vid.thumbnail_url) {
           const parts = vid.thumbnail_url.split('/thumbnails/');
-          if (parts[1]) {
-            await supabaseClient.storage.from('thumbnails').remove([decodeURIComponent(parts[1])]);
-          }
+          if (parts[1]) await supabaseClient.storage.from('thumbnails').remove([decodeURIComponent(parts[1])]);
         }
-      } catch (e) { console.warn('Storage delete failed:', e); }
+      } catch (e) {}
 
-      const { error } = await supabaseClient.from('videos').delete().eq('id', vid.id);
-      if (error) throw error;
-
+      await supabaseClient.from('videos').delete().eq('id', vid.id);
       await deleteVideoFromIDB(vid.id);
-
       showToast('🗑 Video deleted');
       closeVideoActions();
       await loadFeedFromSupabase();
@@ -1182,9 +1444,7 @@ if (vaDeleteBtn) {
   });
 }
 
-// ============================================================
-// EDIT VIDEO PAGE
-// ============================================================
+// ==================== EDIT VIDEO ====================
 function openEditVideoPage(vid) {
   currentEditVideoId = vid.id;
   currentEditThumbnailData = null;
@@ -1210,10 +1470,7 @@ if (editVideoCancelBtn) editVideoCancelBtn.addEventListener('click', () => editV
 
 if (editVideoThumb) {
   editVideoThumb.addEventListener('click', () => {
-    if (editVideoThumbInput) {
-      editVideoThumbInput.value = '';
-      editVideoThumbInput.click();
-    }
+    if (editVideoThumbInput) { editVideoThumbInput.value = ''; editVideoThumbInput.click(); }
   });
 }
 
@@ -1243,7 +1500,6 @@ document.querySelectorAll('#editVideoPage .visibility-option').forEach(opt => {
 if (editVideoSaveBtn) {
   editVideoSaveBtn.addEventListener('click', async () => {
     if (!currentEditVideoId) return;
-
     const vid = state.allVideos.find(v => v.id === currentEditVideoId);
     if (!vid) return;
 
@@ -1296,50 +1552,29 @@ if (editVideoSaveBtn) {
 }
 
 // ============================================================
-// TERMS PAGE
+// TERMS + SUPPORT
 // ============================================================
-if (termsBtn) {
-  termsBtn.addEventListener('click', () => {
-    if (termsPage) termsPage.classList.add('open');
-  });
-}
-if (termsBackBtn) {
-  termsBackBtn.addEventListener('click', () => {
-    if (termsPage) termsPage.classList.remove('open');
-  });
-}
+if (termsBtn) termsBtn.addEventListener('click', () => termsPage.classList.add('open'));
+if (termsBackBtn) termsBackBtn.addEventListener('click', () => termsPage.classList.remove('open'));
 
-// ============================================================
-// SUPPORT CHAT
-// ============================================================
 if (contactBtn) {
   contactBtn.addEventListener('click', () => {
-    if (supportPage) {
-      supportPage.classList.add('open');
-      if (supportInput) supportInput.focus();
-    }
+    supportPage.classList.add('open');
+    if (supportInput) supportInput.focus();
   });
 }
-if (supportBackBtn) {
-  supportBackBtn.addEventListener('click', () => {
-    if (supportPage) supportPage.classList.remove('open');
-  });
-}
+if (supportBackBtn) supportBackBtn.addEventListener('click', () => supportPage.classList.remove('open'));
 
 const BOT_RESPONSES = {
   'upload': '📹 To upload a video:\n1. Tap the + button\n2. Choose "Upload Video" or "Upload Short"\n3. Record or pick from gallery\n4. Fill in title, description, thumbnail\n5. Tap Publish',
-  'monetization': '💰 Monetization requires:\n• 1,000 views\n• 4,000 watch hours\n• 1,000 subscribers\n\nOnce eligible, apply via Profile → Monetization.',
-  'video not playing': '🎬 If video is not playing:\n1. Check internet connection\n2. Refresh the page\n3. Try clearing cache in Settings\n4. Make sure the video format is supported (MP4, WebM)',
-  'account': '👤 For account issues:\n1. Try logging out and logging back in\n2. Reset your password if needed\n3. Contact support at syedtechnical63@gmail.com for help',
-  'delete': '🗑 To delete your video:\n1. Find your video (with YOURS badge)\n2. Tap the 3-dot menu\n3. Choose "Delete Video"\n4. Confirm deletion',
-  'edit': '✏️ To edit your video:\n1. Tap 3-dot menu on your video\n2. Choose "Edit Video"\n3. Change title, description, or category\n4. Save changes',
-  'privacy': '🔒 To change privacy:\n1. Tap 3-dot menu\n2. Choose "Change Privacy"\n3. Toggle: Public → Unlisted → Private',
+  'go live': '🔴 To go live:\n1. You need 50+ subscribers\n2. Tap + → Go Live\n3. Fill title, description, tags\n4. Tap "Start Live"',
+  'monetization': '💰 Revenue:\n• $1 per 500 subscribers\n• $0.50 per 1000 watch hours\n\nMinimum withdrawal: $1.00',
+  'video not playing': '🎬 If video is not playing:\n1. Check internet\n2. Refresh the page\n3. Clear cache in Settings',
   'hello': 'Hi there! 👋 How can I help you today?',
   'hi': 'Hello! 👋 How can I help you today?',
-  'thanks': 'You\'re welcome! 😊 Anything else I can help with?',
-  'help': 'I can help with:\n• Uploading videos\n• Monetization\n• Editing videos\n• Privacy settings\n• Account issues\n\nJust ask!',
-  'email': '📧 For direct support, email us at:\n**syedtechnical63@gmail.com**',
-  'contact': '📧 Contact us at:\n**syedtechnical63@gmail.com**\n\nWe usually reply within 24 hours.'
+  'thanks': 'You\'re welcome! 😊',
+  'help': 'I can help with:\n• Uploading videos\n• Going Live\n• Monetization\n• Account issues',
+  'email': '📧 Email: **syedtechnical63@gmail.com**'
 };
 
 function getBotResponse(userMsg) {
@@ -1347,31 +1582,20 @@ function getBotResponse(userMsg) {
   for (const key of Object.keys(BOT_RESPONSES)) {
     if (msg.includes(key)) return BOT_RESPONSES[key];
   }
-  return `Thanks for your message! 📩\n\nOur support team has been notified at **syedtechnical63@gmail.com**. We'll reply as soon as possible.`;
+  return `Thanks! Our team will reply soon.`;
 }
 
 function addSupportMessage(text, isUser = false) {
   if (!supportBody) return;
   const msgDiv = document.createElement('div');
   msgDiv.className = 'support-message ' + (isUser ? 'user' : 'bot');
-  
   const now = new Date();
   const timeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-  
   const avatarHTML = isUser
     ? `<div class="support-avatar"><i class="fas fa-user"></i></div>`
     : `<div class="support-avatar"><i class="fas fa-robot"></i></div>`;
-  
   const formattedText = escapeHTML(text).replace(/\n/g, '<br>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  
-  msgDiv.innerHTML = `
-    ${avatarHTML}
-    <div class="support-bubble">
-      <div class="support-text">${formattedText}</div>
-      <div class="support-time">${timeStr}</div>
-    </div>
-  `;
-  
+  msgDiv.innerHTML = `${avatarHTML}<div class="support-bubble"><div class="support-text">${formattedText}</div><div class="support-time">${timeStr}</div></div>`;
   supportBody.appendChild(msgDiv);
   supportBody.scrollTop = supportBody.scrollHeight;
 }
@@ -1380,43 +1604,24 @@ async function sendSupportMessage() {
   if (!supportInput) return;
   const text = supportInput.value.trim();
   if (!text) return;
-
   supportInput.value = '';
   addSupportMessage(text, true);
-
-  try {
-    const messages = JSON.parse(localStorage.getItem('fortube_support_messages') || '[]');
-    messages.push({
-      from: state.email || 'Anonymous',
-      message: text,
-      time: new Date().toISOString()
-    });
-    localStorage.setItem('fortube_support_messages', JSON.stringify(messages.slice(-50)));
-  } catch (e) {}
 
   const typingDiv = document.createElement('div');
   typingDiv.className = 'support-message bot';
   typingDiv.id = 'typingIndicator';
-  typingDiv.innerHTML = `
-    <div class="support-avatar"><i class="fas fa-robot"></i></div>
-    <div class="support-bubble">
-      <div class="support-text">Typing...</div>
-    </div>
-  `;
+  typingDiv.innerHTML = `<div class="support-avatar"><i class="fas fa-robot"></i></div><div class="support-bubble"><div class="support-text">Typing...</div></div>`;
   supportBody.appendChild(typingDiv);
   supportBody.scrollTop = supportBody.scrollHeight;
 
   setTimeout(() => {
     typingDiv.remove();
-    const response = getBotResponse(text);
-    addSupportMessage(response, false);
+    addSupportMessage(getBotResponse(text), false);
   }, 800);
 }
 
 if (supportSendBtn) supportSendBtn.addEventListener('click', sendSupportMessage);
-if (supportInput) supportInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') sendSupportMessage();
-});
+if (supportInput) supportInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendSupportMessage(); });
 
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.quick-btn');
@@ -1453,15 +1658,9 @@ async function renderSubscriptions() {
     const avatarHTML = ch.avatar_url
       ? `<img src="${ch.avatar_url}" style="width:100%;height:100%;object-fit:cover;">`
       : (ch.avatar_emoji || '🎬');
-    html += `
-      <div class="subs-channel-chip" data-username="${escapeHTML(ch.username)}">
-        <div class="subs-channel-avatar">${avatarHTML}</div>
-        <div class="subs-channel-name">${escapeHTML(ch.name)}</div>
-      </div>
-    `;
+    html += `<div class="subs-channel-chip" data-username="${escapeHTML(ch.username)}"><div class="subs-channel-avatar">${avatarHTML}</div><div class="subs-channel-name">${escapeHTML(ch.name)}</div></div>`;
   });
   html += '</div>';
-
   html += '<div class="profile-section-title" style="margin:20px 4px 10px;"><i class="fas fa-video"></i> Latest videos</div>';
 
   if (subsVideos.length === 0) {
@@ -1475,24 +1674,7 @@ async function renderSubscriptions() {
       const chAvatarHTML = ch.avatar_url
         ? `<img src="${ch.avatar_url}" style="width:100%;height:100%;object-fit:cover;">`
         : (ch.avatar_emoji || '👤');
-      html += `
-        <div class="video-card" data-vid="${vid.id}" style="margin:0 0 14px;">
-          <div class="thumbnail-box">
-            ${thumbHTML}
-            <span class="duration-badge">${vid.duration || '0:00'}</span>
-          </div>
-          <div class="video-details">
-            <div class="channel-icon">${chAvatarHTML}</div>
-            <div class="video-meta">
-              <div class="video-title">${escapeHTML(vid.title)}</div>
-              <div class="channel-name">${escapeHTML(ch.name || '')}</div>
-              <div class="video-stats">
-                <span><i class="fas fa-eye"></i> ${vid.views || 0}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
+      html += `<div class="video-card" data-vid="${vid.id}" style="margin:0 0 14px;"><div class="thumbnail-box">${thumbHTML}<span class="duration-badge">${vid.duration || '0:00'}</span>${vid.is_live ? '<span class="live-badge">🔴 LIVE</span>' : ''}</div><div class="video-details"><div class="channel-icon">${chAvatarHTML}</div><div class="video-meta"><div class="video-title">${escapeHTML(vid.title)}</div><div class="channel-name">${escapeHTML(ch.name || '')}</div><div class="video-stats"><span><i class="fas fa-eye"></i> ${vid.views || 0}</span></div></div></div></div>`;
     });
   }
 
@@ -1510,7 +1692,8 @@ async function renderSubscriptions() {
       const vid = state.allVideos.find(v => v.id === el.dataset.vid);
       if (vid) {
         subscriptionsPage.classList.remove('open');
-        openWatchPage(vid);
+        if (vid.is_live) openLiveWatch(vid);
+        else openWatchPage(vid);
       }
     });
   });
@@ -1521,6 +1704,22 @@ if (subsBackBtn) subsBackBtn.addEventListener('click', () => subscriptionsPage.c
 // ==================== PLUS MENU ====================
 function openPlusMenu() {
   if (!state.loggedIn) { showToast('Please login first'); return; }
+  
+  if (state.channel) {
+    const subs = state.channel.subscribers_count || 0;
+    if (liveSubsBadge) {
+      if (subs >= 50 || isUserAdmin()) {
+        liveSubsBadge.textContent = '✅ Unlocked';
+        liveSubsBadge.style.background = '#e8f5ee';
+        liveSubsBadge.style.color = '#0a6b3c';
+      } else {
+        liveSubsBadge.textContent = `${subs}/50`;
+        liveSubsBadge.style.background = '#fff4e0';
+        liveSubsBadge.style.color = '#d97706';
+      }
+    }
+  }
+  
   if (plusMenu) plusMenu.classList.add('open');
   if (plusMenuOverlay) plusMenuOverlay.classList.add('open');
 }
@@ -1554,43 +1753,503 @@ if (plusShortBtn) {
 if (plusLiveBtn) {
   plusLiveBtn.addEventListener('click', () => {
     closePlusMenu();
-    handleGoLive();
+    setTimeout(() => openLiveSetup(), 300);
   });
 }
 
-async function handleGoLive() {
+// ==================== LIVE STREAMING ====================
+async function openLiveSetup() {
   if (!state.channel) { showToast('Create channel first'); openChannelSetup(); return; }
-  const subs = state.channel.subscribers_count || 0;
-  if (subs < 50) {
-    showAlert(
-      'Live Streaming Locked',
-      `You need at least <strong>50 subscribers</strong> to start live streaming.<br><br>You currently have <strong>${subs}</strong> subscriber(s).`,
-      'fa-broadcast-tower'
-    );
+  
+  const isAdmin = isUserAdmin();
+  if (!isAdmin) {
+    const subs = state.channel.subscribers_count || 0;
+    if (subs < 50) {
+      showAlert('Live Streaming Locked', 
+        `You need at least <strong>50 subscribers</strong> to start live streaming.<br><br>You currently have <strong>${subs}</strong> subscriber(s).`, 
+        'fa-broadcast-tower');
+      return;
+    }
+  }
+
+  if (state.activeLiveStream) {
+    showAlert('Already Live', 'You already have an active live stream.', 'fa-broadcast-tower');
     return;
   }
-  showToast('🔴 Starting live stream...');
-  const videoId = 'live_' + Date.now();
-  const { error } = await supabaseClient.from('videos').insert({
-    id: videoId,
-    owner_id: state.user.id,
-    channel_id: state.channel.id,
-    channel_username: state.channel.username,
-    channel_name: state.channel.name,
-    title: state.channel.name + ' is LIVE',
-    description: 'Live stream',
-    duration: 'LIVE',
-    category: 'Entertainment',
-    type: 'live',
-    is_live: true,
-    visibility: 'public',
-    video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    views: 0,
-    likes: 0
+
+  liveTitle.value = '';
+  liveDescription.value = '';
+  liveCategory.value = 'Entertainment';
+  liveTags = [];
+  liveVisibility = 'public';
+  renderLiveTags();
+  document.querySelectorAll('#liveSetupModal .visibility-option').forEach(v => v.classList.remove('active'));
+  document.querySelector('#liveSetupModal .visibility-option[data-livevis="public"]')?.classList.add('active');
+
+  liveSetupModal.classList.add('open');
+
+  try {
+    previewStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    });
+    livePreviewVideo.srcObject = previewStream;
+    livePreviewVideo.play();
+  } catch (e) {
+    showToast('❌ Camera access needed');
+    liveSetupModal.classList.remove('open');
+  }
+}
+
+function closeLiveSetup() {
+  if (previewStream) {
+    previewStream.getTracks().forEach(t => t.stop());
+    previewStream = null;
+  }
+  livePreviewVideo.srcObject = null;
+  liveSetupModal.classList.remove('open');
+}
+
+function renderLiveTags() {
+  if (!liveTagsContainer) return;
+  liveTagsContainer.innerHTML = liveTags.map((t, i) => 
+    `<span class="tag-chip">#${escapeHTML(t)}<i class="fas fa-times" data-idx="${i}"></i></span>`
+  ).join('');
+  liveTagsContainer.querySelectorAll('.tag-chip i').forEach(el => {
+    el.addEventListener('click', () => { 
+      liveTags.splice(parseInt(el.dataset.idx), 1); 
+      renderLiveTags(); 
+    });
   });
-  if (error) { showToast('❌ ' + error.message); return; }
-  showToast('🔴 You are LIVE!');
-  await loadFeedFromSupabase();
+}
+
+async function startLiveStream() {
+  const title = liveTitle.value.trim();
+  if (!title) { showToast('Live title enter karein'); return; }
+  if (!previewStream) { showToast('Camera not ready'); return; }
+
+  liveStartBtn.disabled = true;
+  liveStartBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting...';
+
+  try {
+    const channelName = generateLiveChannelName();
+    const videoId = 'live_' + Date.now();
+
+    const { data: liveData, error: liveError } = await supabaseClient
+      .from('live_streams')
+      .insert({
+        id: videoId,
+        owner_id: state.user.id,
+        channel_id: state.channel.id,
+        channel_username: state.channel.username,
+        channel_name: state.channel.name,
+        title: title,
+        description: liveDescription.value.trim(),
+        category: liveCategory.value,
+        tags: liveTags,
+        visibility: liveVisibility,
+        agora_channel: channelName,
+        is_active: true,
+        viewers_count: 0,
+        views: 0,
+        likes: 0,
+        started_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (liveError) throw liveError;
+
+    await supabaseClient.from('videos').insert({
+      id: videoId,
+      owner_id: state.user.id,
+      channel_id: state.channel.id,
+      channel_username: state.channel.username,
+      channel_name: state.channel.name,
+      title: title,
+      description: liveDescription.value.trim(),
+      duration: 'LIVE',
+      category: liveCategory.value,
+      tags: liveTags,
+      visibility: liveVisibility,
+      video_url: '',
+      thumbnail_url: state.channel.avatar_url || '',
+      views: 0,
+      likes: 0,
+      watch_time_seconds: 0,
+      type: 'live',
+      is_live: true
+    });
+
+    state.activeLiveStream = liveData;
+    state.liveStartTime = Date.now();
+
+    closeLiveSetup();
+    liveStreamPage.classList.add('open');
+    liveStreamTitle.textContent = title;
+    liveStreamChannel.textContent = state.channel.name;
+
+    await setupAgoraBroadcaster(channelName, previewStream);
+
+    state.liveDurationInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - state.liveStartTime) / 1000);
+      liveStreamDuration.textContent = formatDuration(elapsed);
+    }, 1000);
+
+    const { data: subs } = await supabaseClient
+      .from('subscriptions')
+      .select('user_id')
+      .eq('channel_id', state.channel.id);
+    
+    if (subs && subs.length > 0) {
+      const notifications = subs.map(sub => ({
+        user_id: sub.user_id,
+        message: `🔴 ${state.channel.name} is LIVE: "${title}"`,
+        type: 'live'
+      }));
+      
+      for (let i = 0; i < notifications.length; i += 100) {
+        await supabaseClient.from('notifications').insert(notifications.slice(i, i + 100));
+      }
+    }
+
+    showToast('🔴 You are LIVE!');
+    await loadFeedFromSupabase();
+
+  } catch (err) {
+    console.error('Start live error:', err);
+    showToast('❌ ' + err.message);
+    liveStartBtn.disabled = false;
+    liveStartBtn.innerHTML = '<i class="fas fa-broadcast-tower"></i> Start Live';
+    return;
+  }
+
+  liveStartBtn.disabled = false;
+  liveStartBtn.innerHTML = '<i class="fas fa-broadcast-tower"></i> Start Live';
+}
+
+async function setupAgoraBroadcaster(channelName, stream) {
+  try {
+    const client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+    state.agoraClient = client;
+
+    await client.setClientRole('host');
+    await client.join(AGORA_APP_ID, channelName, null, null);
+
+    const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
+    state.agoraTracks = [audioTrack, videoTrack];
+
+    videoTrack.play(liveBroadcastContainer);
+    await client.publish([audioTrack, videoTrack]);
+
+    client.on('user-joined', () => updateLiveViewerCount());
+    client.on('user-left', () => updateLiveViewerCount());
+
+  } catch (err) {
+    console.error('Agora broadcaster error:', err);
+    const localVideo = document.createElement('video');
+    localVideo.srcObject = stream;
+    localVideo.autoplay = true;
+    localVideo.muted = true;
+    localVideo.playsInline = true;
+    localVideo.style.cssText = 'width:100%;height:100%;object-fit:contain;';
+    liveBroadcastContainer.innerHTML = '';
+    liveBroadcastContainer.appendChild(localVideo);
+  }
+}
+
+async function updateLiveViewerCount() {
+  if (!state.activeLiveStream) return;
+  
+  try {
+    const { data } = await supabaseClient
+      .from('live_viewers')
+      .select('id')
+      .eq('live_id', state.activeLiveStream.id)
+      .eq('is_watching', true);
+    
+    const count = data ? data.length : 0;
+    liveViewerCount.innerHTML = `<i class="fas fa-eye"></i> ${count} viewers`;
+    
+    await supabaseClient
+      .from('live_streams')
+      .update({ viewers_count: count })
+      .eq('id', state.activeLiveStream.id);
+  } catch (e) {}
+}
+
+async function endLiveStream() {
+  if (!confirm('End live stream?')) return;
+
+  try {
+    if (state.activeLiveStream) {
+      const elapsed = Math.floor((Date.now() - state.liveStartTime) / 1000);
+      
+      await supabaseClient
+        .from('live_streams')
+        .update({ 
+          is_active: false, 
+          ended_at: new Date().toISOString(),
+          duration_seconds: elapsed
+        })
+        .eq('id', state.activeLiveStream.id);
+
+      await supabaseClient
+        .from('videos')
+        .update({ 
+          is_live: false, 
+          duration: formatDuration(elapsed),
+          watch_time_seconds: elapsed
+        })
+        .eq('id', state.activeLiveStream.id);
+    }
+
+    if (state.agoraClient) {
+      await state.agoraClient.leave();
+      state.agoraClient = null;
+    }
+
+    state.agoraTracks.forEach(track => {
+      try { track.stop(); track.close(); } catch (e) {}
+    });
+    state.agoraTracks = [];
+
+    if (state.liveDurationInterval) {
+      clearInterval(state.liveDurationInterval);
+      state.liveDurationInterval = null;
+    }
+
+    state.activeLiveStream = null;
+    state.liveStartTime = null;
+
+    liveStreamPage.classList.remove('open');
+    showToast('✅ Live ended');
+    await loadFeedFromSupabase();
+
+  } catch (err) {
+    showToast('❌ ' + err.message);
+  }
+}
+
+async function openLiveWatch(vid) {
+  if (!vid || !vid.is_live) {
+    showToast('Stream ended');
+    return;
+  }
+
+  const { data: liveData } = await supabaseClient
+    .from('live_streams')
+    .select('*')
+    .eq('id', vid.id)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!liveData) {
+    showToast('Stream ended');
+    await loadFeedFromSupabase();
+    return;
+  }
+
+  currentWatchingLive = liveData;
+
+  const ch = state.allChannels.find(c => c.username === liveData.channel_username) || {};
+  const isMine = liveData.owner_id === state.user?.id;
+  const chId = ch.id;
+  const isSubscribed = state.subscriptions.includes(chId);
+
+  const chAvatarHTML = ch.avatar_url
+    ? `<img src="${ch.avatar_url}" style="width:100%;height:100%;object-fit:cover;">`
+    : (ch.avatar_emoji || '👤');
+
+  liveWatchHeaderTitle.textContent = liveData.title;
+  liveWatchTitle.textContent = liveData.title;
+  liveWatchChannel.textContent = liveData.channel_name;
+  liveWatchChannelName.innerHTML = `<i class="fas fa-check-circle"></i> ${escapeHTML(liveData.channel_name)}`;
+  liveWatchSubsCount.textContent = `${ch.subscribers_count || 0} subscribers`;
+  liveWatchDesc.textContent = liveData.description || 'Live stream';
+  liveWatchChannelIcon.innerHTML = chAvatarHTML;
+
+  if (isMine) {
+    liveWatchSubBtn.style.display = 'none';
+  } else {
+    liveWatchSubBtn.style.display = 'flex';
+    liveWatchSubBtn.className = 'subscribe-btn' + (isSubscribed ? ' subscribed' : '');
+    liveWatchSubBtn.innerHTML = isSubscribed 
+      ? '<i class="fas fa-check"></i> Subscribed' 
+      : '<i class="fas fa-plus"></i> Subscribe';
+  }
+
+  await joinAgoraAsViewer(liveData.agora_channel);
+
+  if (state.user && !isMine) {
+    const { data: existing } = await supabaseClient
+      .from('live_viewers')
+      .select('id')
+      .eq('live_id', liveData.id)
+      .eq('user_id', state.user.id)
+      .maybeSingle();
+
+    if (!existing) {
+      await supabaseClient
+        .from('live_streams')
+        .update({ views: (liveData.views || 0) + 1 })
+        .eq('id', liveData.id);
+    }
+
+    await supabaseClient.from('live_viewers').upsert({
+      live_id: liveData.id,
+      user_id: state.user.id,
+      is_watching: true,
+      joined_at: new Date().toISOString()
+    }, { onConflict: 'live_id,user_id' });
+  }
+
+  const startTime = new Date(liveData.started_at).getTime();
+  const durationInterval = setInterval(async () => {
+    if (!currentWatchingLive) {
+      clearInterval(durationInterval);
+      return;
+    }
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    liveWatchDuration.textContent = formatDuration(elapsed);
+
+    const { data: viewers } = await supabaseClient
+      .from('live_viewers')
+      .select('id')
+      .eq('live_id', liveData.id)
+      .eq('is_watching', true);
+    
+    liveWatchViewers.innerHTML = `<i class="fas fa-eye"></i> ${viewers ? viewers.length : 0}`;
+  }, 1000);
+
+  liveWatchPage.classList.add('open');
+}
+
+async function joinAgoraAsViewer(channelName) {
+  try {
+    const client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+    state.agoraClient = client;
+
+    client.on('user-published', async (user, mediaType) => {
+      await client.subscribe(user, mediaType);
+      if (mediaType === 'video') {
+        liveWatchContainer.innerHTML = '';
+        user.videoTrack.play(liveWatchContainer);
+      }
+      if (mediaType === 'audio') {
+        user.audioTrack.play();
+      }
+    });
+
+    client.on('user-unpublished', () => {
+      liveWatchContainer.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Stream ended</div>';
+    });
+
+    await client.setClientRole('audience');
+    await client.join(AGORA_APP_ID, channelName, null, null);
+
+  } catch (err) {
+    liveWatchContainer.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Unable to connect.</div>';
+  }
+}
+
+async function closeLiveWatch() {
+  try {
+    if (state.agoraClient) {
+      await state.agoraClient.leave();
+      state.agoraClient = null;
+    }
+  } catch (e) {}
+
+  if (currentWatchingLive && state.user) {
+    try {
+      await supabaseClient
+        .from('live_viewers')
+        .update({ is_watching: false })
+        .eq('live_id', currentWatchingLive.id)
+        .eq('user_id', state.user.id);
+    } catch (e) {}
+  }
+
+  currentWatchingLive = null;
+  liveWatchContainer.innerHTML = '';
+  liveWatchPage.classList.remove('open');
+}
+
+if (liveSetupBackBtn) liveSetupBackBtn.addEventListener('click', closeLiveSetup);
+if (liveSetupCancelBtn) liveSetupCancelBtn.addEventListener('click', closeLiveSetup);
+
+if (liveAddTagBtn) {
+  liveAddTagBtn.addEventListener('click', () => {
+    const val = liveTagInput.value.trim().replace(/^#/, '').replace(/,/g, '');
+    if (!val || liveTags.includes(val) || liveTags.length >= 10) return;
+    liveTags.push(val);
+    liveTagInput.value = '';
+    renderLiveTags();
+  });
+}
+
+if (liveTagInput) {
+  liveTagInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); liveAddTagBtn.click(); }
+  });
+}
+
+document.querySelectorAll('#liveSetupModal .visibility-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('#liveSetupModal .visibility-option').forEach(v => v.classList.remove('active'));
+    opt.classList.add('active');
+    liveVisibility = opt.dataset.livevis;
+  });
+});
+
+if (liveStartBtn) liveStartBtn.addEventListener('click', startLiveStream);
+if (liveEndBtn) liveEndBtn.addEventListener('click', endLiveStream);
+if (liveWatchBackBtn) liveWatchBackBtn.addEventListener('click', closeLiveWatch);
+
+if (liveWatchSubBtn) {
+  liveWatchSubBtn.addEventListener('click', async () => {
+    if (!currentWatchingLive) return;
+    const ch = state.allChannels.find(c => c.username === currentWatchingLive.channel_username);
+    if (!ch) return;
+    
+    const btn = liveWatchSubBtn;
+    if (btn.classList.contains('subscribed')) {
+      await supabaseClient.from('subscriptions').delete().eq('user_id', state.user.id).eq('channel_id', ch.id);
+      const newCount = Math.max(0, (ch.subscribers_count || 1) - 1);
+      await supabaseClient.from('channels').update({ subscribers_count: newCount }).eq('id', ch.id);
+      btn.classList.remove('subscribed');
+      btn.innerHTML = '<i class="fas fa-plus"></i> Subscribe';
+      liveWatchSubsCount.textContent = newCount + ' subscribers';
+      state.subscriptions = state.subscriptions.filter(id => id !== ch.id);
+    } else {
+      await supabaseClient.from('subscriptions').insert({ user_id: state.user.id, channel_id: ch.id });
+      const newCount = (ch.subscribers_count || 0) + 1;
+      await supabaseClient.from('channels').update({ subscribers_count: newCount }).eq('id', ch.id);
+      btn.classList.add('subscribed');
+      btn.innerHTML = '<i class="fas fa-check"></i> Subscribed';
+      liveWatchSubsCount.textContent = newCount + ' subscribers';
+      state.subscriptions.push(ch.id);
+      showToast('✅ Subscribed!');
+    }
+  });
+}
+
+if (liveLikeBtn) {
+  liveLikeBtn.addEventListener('click', async () => {
+    if (!currentWatchingLive) return;
+    const newLikes = (currentWatchingLive.likes || 0) + 1;
+    await supabaseClient.from('live_streams').update({ likes: newLikes }).eq('id', currentWatchingLive.id);
+    await supabaseClient.from('videos').update({ likes: newLikes }).eq('id', currentWatchingLive.id);
+    liveLikeCount.textContent = newLikes;
+    showToast('👍 Liked');
+  });
+}
+
+if (liveShareBtn) {
+  liveShareBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(window.location.href).then(() => showToast('🔗 Link copied'));
+  });
 }
 
 // ==================== CAMERA ====================
@@ -1601,12 +2260,6 @@ let recordedChunks = [];
 let isRecording = false;
 let recordTimerInterval = null;
 let recordSeconds = 0;
-let currentUploadType = 'short';
-let pendingUpload = null;
-let metaTags = [];
-let metaVisibility = 'public';
-let selectedThumbnailData = null;
-let currentVideoBlobUrl = null;
 
 async function openCameraPanel() {
   if (!state.loggedIn) { showToast('Please login first'); return; }
@@ -1711,7 +2364,7 @@ if (recordBtn) {
     recordTimerInterval = setInterval(() => {
       recordSeconds++;
       recordTimer.textContent = formatTime(recordSeconds);
-      if (currentUploadType === 'short' && recordSeconds >= 60) { stopRecording(); showToast('Max 60s for short'); }
+      if (currentUploadType === 'short' && recordSeconds >= 60) { stopRecording(); showToast('Max 60s'); }
       if (currentUploadType === 'long' && recordSeconds >= 600) { stopRecording(); showToast('Max 10min'); }
     }, 1000);
   });
@@ -1736,9 +2389,7 @@ if (nativeGalleryInput) {
       if (isFinite(dur) && dur > 0) {
         durationStr = Math.floor(dur / 60) + ':' + String(Math.floor(dur % 60)).padStart(2, '0');
       }
-      if (isFinite(dur) && dur <= 60 && currentUploadType !== 'long') {
-        currentUploadType = 'short';
-      }
+      if (isFinite(dur) && dur <= 60 && currentUploadType !== 'long') currentUploadType = 'short';
       openUploadDetails(file.name.replace(/\.[^/.]+$/, ''), durationStr, url);
     };
     tempVideo.onerror = () => openUploadDetails(file.name, '0:00', url);
@@ -1774,9 +2425,7 @@ if (uploadNextBtn) {
   });
 }
 
-// ============================================================
-// METADATA PAGE (WITH AUTO THUMBNAIL)
-// ============================================================
+// ==================== METADATA PAGE ====================
 async function openMetadataPage() {
   metaTags = [];
   metaVisibility = 'public';
@@ -1806,9 +2455,7 @@ async function openMetadataPage() {
       const resp = await fetch(currentVideoBlobUrl);
       const blob = await resp.blob();
       const autoThumb = await generateThumbnailFromVideo(blob, 1);
-
       selectedThumbnailData = autoThumb;
-
       thumbnailPicker.innerHTML = `
         <img src="${autoThumb}" style="width:100%;height:100%;object-fit:cover;">
         <div class="thumb-status" style="display:flex;">
@@ -1817,7 +2464,6 @@ async function openMetadataPage() {
       `;
       showToast('✅ Auto thumbnail ready!');
     } catch (err) {
-      console.warn('Auto thumbnail failed:', err);
       thumbnailPicker.innerHTML = `
         <video id="thumbPreviewVideo" muted playsinline src="${currentVideoBlobUrl}"></video>
         <div class="thumb-overlay">
@@ -1843,9 +2489,6 @@ if (metadataCancelBtn) {
   });
 }
 
-// ============================================================
-// THUMBNAIL ACTIONS
-// ============================================================
 if (thumbnailPicker) {
   thumbnailPicker.addEventListener('click', (e) => {
     if (e.target.closest('.thumb-action-btn')) return;
@@ -1933,9 +2576,7 @@ document.querySelectorAll('#metadataPage .visibility-option').forEach(opt => {
   });
 });
 
-// ============================================================
-// PUBLISH
-// ============================================================
+// ==================== PUBLISH ====================
 if (metadataPublishBtn) {
   metadataPublishBtn.addEventListener('click', async () => {
     const title = metaTitle.value.trim();
@@ -1958,8 +2599,8 @@ if (metadataPublishBtn) {
       if (videoBlob.size === 0) throw new Error('Video file empty');
 
       const originalSizeMB = videoBlob.size / (1024 * 1024);
-
       const MAX_SIZE_MB = 40;
+
       if (originalSizeMB > MAX_SIZE_MB) {
         uploadProgressText.textContent = `Compressing ${originalSizeMB.toFixed(1)} MB...`;
         uploadProgressFill.style.width = '10%';
@@ -1968,7 +2609,6 @@ if (metadataPublishBtn) {
         uploadProgressText.textContent = `Compressed: ${originalSizeMB.toFixed(1)} → ${newSizeMB.toFixed(1)} MB`;
         uploadProgressFill.style.width = '30%';
         await new Promise(r => setTimeout(r, 500));
-        if (newSizeMB > 45) throw new Error(`Too large: ${newSizeMB.toFixed(1)} MB`);
       } else {
         uploadProgressFill.style.width = '30%';
         uploadProgressText.textContent = `Video: ${originalSizeMB.toFixed(1)} MB`;
@@ -2051,6 +2691,7 @@ if (metadataPublishBtn) {
         thumbnail_url: thumbnailUrl,
         views: 0,
         likes: 0,
+        watch_time_seconds: 0,
         type: currentUploadType
       });
 
@@ -2070,8 +2711,24 @@ if (metadataPublishBtn) {
 
       await loadFeedFromSupabase();
 
+      const { data: subs } = await supabaseClient
+        .from('subscriptions')
+        .select('user_id')
+        .eq('channel_id', ch.id);
+      
+      if (subs && subs.length > 0) {
+        const notifications = subs.map(sub => ({
+          user_id: sub.user_id,
+          message: `${ch.name} uploaded: "${title}"`,
+          type: 'new_video'
+        }));
+        
+        for (let i = 0; i < notifications.length; i += 100) {
+          await supabaseClient.from('notifications').insert(notifications.slice(i, i + 100));
+        }
+      }
+
     } catch (err) {
-      console.error('Publish error:', err);
       uploadProgressText.textContent = '❌ ' + (err.message || 'Upload failed');
       showToast('❌ ' + (err.message || 'Upload failed'));
     }
@@ -2403,12 +3060,13 @@ async function openChannelView(username) {
         ? `<img src="${vid.thumbnail_url}" style="width:100%;height:100%;object-fit:cover;">`
         : `<i class="fas fa-play-circle" style="font-size:3.8rem;color:#ffffffcc;"></i>`;
       const isMineVid = vid.owner_id === state.user?.id;
-      const menuBtnHTML = isMineVid ? `<button class="my-video-menu-btn" data-mymenu="${vid.id}"><i class="fas fa-ellipsis-v"></i></button>` : '';
-      
+      const menuBtnHTML = isMineVid && !vid.is_live ? `<button class="my-video-menu-btn" data-mymenu="${vid.id}"><i class="fas fa-ellipsis-v"></i></button>` : '';
+
       card.innerHTML = `
         <div class="thumbnail-box">
           ${thumbHTML}
           <span class="duration-badge">${vid.duration || '0:00'}</span>
+          ${vid.is_live ? '<span class="live-badge">🔴 LIVE</span>' : ''}
           ${menuBtnHTML}
         </div>
         <div class="video-details">
@@ -2427,7 +3085,8 @@ async function openChannelView(username) {
           openVideoActions(vid);
           return;
         }
-        openWatchPage(vid);
+        if (vid.is_live) openLiveWatch(vid);
+        else openWatchPage(vid);
       });
       grid.appendChild(card);
     });
@@ -2544,19 +3203,75 @@ function renderRecentlyWatched() {
   }
 }
 
-// ==================== MONETIZATION ====================
+// ============================================================
+// 💰 MONETIZATION UI - With Analytics + Graph
+// ============================================================
 async function updateMonetizationUI() {
   if (!state.channel) return;
 
+  const isAdmin = isUserAdmin();
+
+  // Fetch videos - OWNER_ID se
   const { data: videos } = await supabaseClient
     .from('videos')
-    .select('views')
+    .select('views, watch_time_seconds')
+    .eq('owner_id', state.user.id);
+
+  const { data: liveStreams } = await supabaseClient
+    .from('live_streams')
+    .select('views, duration_seconds')
     .eq('channel_id', state.channel.id);
 
-  const totalViews = (videos || []).reduce((sum, v) => sum + (v.views || 0), 0);
-  const subs = state.channel.subscribers_count || 0;
-  const watchHours = Math.floor(totalViews * 0.5);
+  // Calculate totals
+  const videoViews = (videos || []).reduce((sum, v) => sum + (v.views || 0), 0);
+  const liveViews = (liveStreams || []).reduce((sum, l) => sum + (l.views || 0), 0);
+  const totalViews = videoViews + liveViews;
 
+  const videoWatchSeconds = (videos || []).reduce((sum, v) => sum + (v.watch_time_seconds || 0), 0);
+  const liveWatchSeconds = (liveStreams || []).reduce((sum, l) => 
+    sum + ((l.duration_seconds || 0) * (l.views || 0)), 0);
+  const totalWatchSeconds = videoWatchSeconds + liveWatchSeconds;
+  const watchHours = Math.floor(totalWatchSeconds / 3600);
+
+  const subs = state.channel.subscribers_count || 0;
+
+  const revenue = calculateRevenue(subs, watchHours, totalViews);
+
+  console.log('📊 Analytics:', {
+    totalViews,
+    watchHours,
+    subs,
+    revenue: revenue.total,
+    videosCount: videos?.length || 0
+  });
+
+  // Update revenue display
+  if (totalRevenue) totalRevenue.textContent = revenue.total.toFixed(2);
+  if (qualifiedViewsRevenue) qualifiedViewsRevenue.textContent = totalViews.toLocaleString();
+
+  // 👑 ADMIN: Auto-complete criteria
+  if (isAdmin) {
+    if (viewsProgress) viewsProgress.textContent = `1000/1000`;
+    if (watchProgress) watchProgress.textContent = `4000/4000`;
+    if (subsProgress) subsProgress.textContent = `1000/1000`;
+
+    if (check1) check1.className = 'fas fa-check-circle ci-check';
+    if (check2) check2.className = 'fas fa-check-circle ci-check';
+    if (check3) check3.className = 'fas fa-check-circle ci-check';
+
+    if (progressFill) progressFill.style.width = '100%';
+
+    if (verifyBtn) {
+      verifyBtn.disabled = false;
+      verifyBtn.classList.add('eligible');
+      verifyBtn.textContent = '✅ Verify & Apply';
+    }
+
+    updateAnalyticsDisplay(totalViews, watchHours, subs, revenue);
+    return;
+  }
+
+  // Normal user criteria
   if (viewsProgress) viewsProgress.textContent = `${totalViews}/1000`;
   if (watchProgress) watchProgress.textContent = `${watchHours}/4000`;
   if (subsProgress) subsProgress.textContent = `${subs}/1000`;
@@ -2581,24 +3296,99 @@ async function updateMonetizationUI() {
     verifyBtn.classList.remove('eligible');
     verifyBtn.textContent = `Not Eligible Yet (${done}/3)`;
   }
+
+  updateAnalyticsDisplay(totalViews, watchHours, subs, revenue);
 }
 
+// 🔥 Analytics Display + Graph
+function updateAnalyticsDisplay(views, watchHours, subs, revenue) {
+  // Views analytics
+  const analyticsViews = document.getElementById('analyticsViews');
+  if (analyticsViews) analyticsViews.textContent = views.toLocaleString();
+  
+  const analyticsWatchTime = document.getElementById('analyticsWatchTime');
+  if (analyticsWatchTime) analyticsWatchTime.textContent = watchHours.toLocaleString();
+  
+  const analyticsSubs = document.getElementById('analyticsSubs');
+  if (analyticsSubs) analyticsSubs.textContent = subs.toLocaleString();
+  
+  const revenueFromSubs = document.getElementById('revenueFromSubs');
+  if (revenueFromSubs) revenueFromSubs.textContent = '$' + revenue.subRevenue.toFixed(2);
+  
+  const revenueFromWatch = document.getElementById('revenueFromWatch');
+  if (revenueFromWatch) revenueFromWatch.textContent = '$' + revenue.watchRevenue.toFixed(2);
+  
+  const totalRevenueBreakdown = document.getElementById('totalRevenueBreakdown');
+  if (totalRevenueBreakdown) totalRevenueBreakdown.textContent = '$' + revenue.total.toFixed(2);
+  
+  // 🔥 RENDER CHART
+  renderAnalyticsChart(views, watchHours, subs);
+}
+
+// ============================================================
+// MONETIZATION CARD CLICK
+// ============================================================
 if (monetizationCard) {
-  monetizationCard.addEventListener('click', () => {
+  monetizationCard.addEventListener('click', async () => {
+    await loadUserChannel();
+    
     if (!state.channel) { showToast('Create channel first'); return; }
+    
     monetizationPage.classList.add('open');
-    updateMonetizationUI();
+    
+    const { data: applications } = await supabaseClient
+      .from('monetization_applications')
+      .select('*')
+      .eq('user_id', state.user.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const latestApp = applications && applications[0];
+    const isApproved = latestApp && latestApp.status === 'approved';
+    const isAdmin = isUserAdmin();
+
+    if (isApproved || isAdmin) {
+      eligibilityCard.style.display = 'none';
+      monetizationApplyPage.style.display = 'none';
+      monetizationRevenuePage.style.display = 'block';
+      await updateMonetizationUI();
+    } else {
+      eligibilityCard.style.display = 'block';
+      monetizationApplyPage.style.display = 'none';
+      monetizationRevenuePage.style.display = 'none';
+      await updateMonetizationUI();
+    }
   });
 }
 
 if (monetizationBackBtn) monetizationBackBtn.addEventListener('click', () => monetizationPage.classList.remove('open'));
 
 if (verifyBtn) {
-  verifyBtn.addEventListener('click', () => {
+  verifyBtn.addEventListener('click', async () => {
     if (!verifyBtn.classList.contains('eligible')) return;
-    eligibilityCard.style.display = 'none';
-    monetizationApplyPage.style.display = 'block';
-    monetizationEmail.value = state.email;
+    
+    const { data: applications } = await supabaseClient
+      .from('monetization_applications')
+      .select('*')
+      .eq('user_id', state.user.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const latestApp = applications && applications[0];
+    const isApproved = latestApp && latestApp.status === 'approved';
+    const isAdmin = isUserAdmin();
+
+    if (isApproved || isAdmin) {
+      eligibilityCard.style.display = 'none';
+      monetizationApplyPage.style.display = 'none';
+      monetizationRevenuePage.style.display = 'block';
+      await updateMonetizationUI();
+    } else {
+      eligibilityCard.style.display = 'none';
+      monetizationApplyPage.style.display = 'block';
+      monetizationRevenuePage.style.display = 'none';
+      monetizationEmail.value = state.email;
+    }
   });
 }
 
@@ -2617,22 +3407,43 @@ if (submitMonetizationApplication) {
       const { error: uploadErr } = await supabaseClient.storage.from('verification-documents').upload(docPath, file);
       if (uploadErr) throw uploadErr;
 
+      const isAdmin = isUserAdmin();
+      const status = isAdmin ? 'approved' : 'pending';
+
       const { error } = await supabaseClient.from('monetization_applications').insert({
         user_id: state.user.id,
         email,
-        status: 'pending',
+        status: status,
         document_path: docPath
       });
       if (error) throw error;
 
-      applicationStatus.style.display = 'block';
-      applicationStatus.style.background = '#e8f5ee';
-      applicationStatus.style.color = '#0a6b3c';
-      applicationStatus.style.padding = '15px';
-      applicationStatus.style.borderRadius = '15px';
-      applicationStatus.style.marginTop = '15px';
-      applicationStatus.textContent = '✅ Application submitted!';
-      showToast('🎉 Sent!');
+      if (isAdmin) {
+        applicationStatus.style.display = 'block';
+        applicationStatus.style.background = '#e8f5ee';
+        applicationStatus.style.color = '#0a6b3c';
+        applicationStatus.style.padding = '15px';
+        applicationStatus.style.borderRadius = '15px';
+        applicationStatus.style.marginTop = '15px';
+        applicationStatus.textContent = '✅ Admin — Auto-approved!';
+        showToast('🎉 Welcome Admin!');
+        
+        setTimeout(() => {
+          monetizationApplyPage.style.display = 'none';
+          eligibilityCard.style.display = 'none';
+          monetizationRevenuePage.style.display = 'block';
+          updateMonetizationUI();
+        }, 1500);
+      } else {
+        applicationStatus.style.display = 'block';
+        applicationStatus.style.background = '#e8f5ee';
+        applicationStatus.style.color = '#0a6b3c';
+        applicationStatus.style.padding = '15px';
+        applicationStatus.style.borderRadius = '15px';
+        applicationStatus.style.marginTop = '15px';
+        applicationStatus.textContent = '✅ Application submitted!';
+        showToast('🎉 Sent!');
+      }
     } catch (err) {
       showToast('❌ ' + err.message);
     }
@@ -2642,6 +3453,7 @@ if (submitMonetizationApplication) {
   });
 }
 
+// ==================== WITHDRAW ====================
 if (withdrawRevenueBtn) withdrawRevenueBtn.addEventListener('click', () => withdrawPage.classList.add('open'));
 if (withdrawBackBtn) withdrawBackBtn.addEventListener('click', () => withdrawPage.classList.remove('open'));
 
@@ -2659,6 +3471,7 @@ document.getElementById('submitWithdrawBtn')?.addEventListener('click', () => {
   const acc = document.getElementById('withdrawAccountNumber').value.trim();
   const amount = parseFloat(document.getElementById('withdrawAmount').value);
   if (!holder || !bank || !acc || !amount || amount <= 0) { showToast('All fields required'); return; }
+  if (amount < MIN_WITHDRAWAL) { showToast(`Minimum: $${MIN_WITHDRAWAL}`); return; }
   const status = document.getElementById('withdrawStatus');
   status.style.display = 'block';
   status.style.background = '#e8f5ee';
@@ -2693,6 +3506,7 @@ document.querySelectorAll('.drawer-link').forEach(link => {
     document.querySelector('.nav-item[data-tab="home"]').classList.add('active');
 
     if (type === 'home') { currentFilter = 'home'; renderFeed('', 'home'); }
+    else if (type === 'live') { currentFilter = 'live'; renderFeed('', 'live'); }
     else if (type === 'gaming') { currentFilter = 'gaming'; renderFeed('', 'gaming'); }
     else if (type === 'sports') { currentFilter = 'sports'; renderFeed('', 'sports'); }
     else if (type === 'yourvideos') { currentFilter = 'yourvideos'; renderFeed('', 'yourvideos'); }
@@ -2740,10 +3554,10 @@ if (settingsBtn) {
   });
 }
 
-if (settingsLanguage) settingsLanguage.addEventListener('change', () => { state.preferences.language = settingsLanguage.value; showToast('🌐 Language: ' + settingsLanguage.value); });
-if (settingsRegion) settingsRegion.addEventListener('change', () => { state.preferences.region = settingsRegion.value; showToast('📍 Region: ' + settingsRegion.value); });
-if (settingsCurrency) settingsCurrency.addEventListener('change', () => { state.preferences.currency = settingsCurrency.value; showToast('💱 Currency: ' + settingsCurrency.value); });
-if (settingsQuality) settingsQuality.addEventListener('change', () => { state.preferences.quality = settingsQuality.value; showToast('🎬 Quality: ' + settingsQuality.value); });
+if (settingsLanguage) settingsLanguage.addEventListener('change', () => { state.preferences.language = settingsLanguage.value; showToast('🌐 ' + settingsLanguage.value); });
+if (settingsRegion) settingsRegion.addEventListener('change', () => { state.preferences.region = settingsRegion.value; showToast('📍 ' + settingsRegion.value); });
+if (settingsCurrency) settingsCurrency.addEventListener('change', () => { state.preferences.currency = settingsCurrency.value; showToast('💱 ' + settingsCurrency.value); });
+if (settingsQuality) settingsQuality.addEventListener('change', () => { state.preferences.quality = settingsQuality.value; showToast('🎬 ' + settingsQuality.value); });
 
 if (toggleSubtitles) toggleSubtitles.addEventListener('click', () => { toggleSubtitles.classList.toggle('active'); showToast(toggleSubtitles.classList.contains('active') ? 'Subtitles ON' : 'Subtitles OFF'); });
 if (toggleRestricted) toggleRestricted.addEventListener('click', () => { toggleRestricted.classList.toggle('active'); showToast(toggleRestricted.classList.contains('active') ? 'Restricted ON' : 'Restricted OFF'); });
@@ -2758,11 +3572,14 @@ if (clearCacheBtn) {
   });
 }
 
+document.getElementById('changePasswordBtn')?.addEventListener('click', () => {
+  if (!state.email) { showToast('Login first'); return; }
+  resetPassword(state.email);
+});
+
 if (deleteAccountBtn) {
   deleteAccountBtn.addEventListener('click', () => {
-    if (confirm('Are you sure you want to delete your account?')) {
-      showToast('⚠️ Contact: syedtechnical63@gmail.com');
-    }
+    if (confirm('Are you sure?')) showToast('⚠️ Contact: syedtechnical63@gmail.com');
   });
 }
 
@@ -2803,14 +3620,22 @@ if (micBtn) {
   });
 }
 
-// ==================== MISC ====================
 if (alertCloseBtn) alertCloseBtn.addEventListener('click', () => alertPopup.classList.remove('active'));
 
 // ==================== INIT ====================
 checkSession();
 
+window.addEventListener('beforeunload', async () => {
+  if (state.currentWatchingVideoId) {
+    await saveWatchTimeNow(state.currentWatchingVideoId);
+  }
+  if (state.agoraClient) {
+    try { state.agoraClient.leave(); } catch (e) {}
+  }
+});
+
 setInterval(() => {
-  if (state.loggedIn && watchPage && !watchPage.classList.contains('open')) {
+  if (state.loggedIn && watchPage && !watchPage.classList.contains('open') && !liveWatchPage.classList.contains('open')) {
     loadFeedFromSupabase();
     loadNotifications();
   }
