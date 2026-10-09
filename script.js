@@ -1,7 +1,5 @@
 /* ============================================================
-   FORTUBE v15 - FINAL (Views + Watch Time + Revenue + Graph)
-   Har 10 Views = 1 Hour Watch Time
-   $0.07 per 1000 Views | $0.50 per 1000 Hours | $1 per 500 Subs
+   FORTUBE v14 - FINAL (Analytics Graph + All Fixes)
    ============================================================ */
 
 const SUPABASE_URL = "https://eaxstlpltwgpmaupgcwq.supabase.co";
@@ -12,14 +10,11 @@ const AGORA_APP_ID = "e84b0914baa44e8c878fb68ade1d804e";
 const ADMIN_EMAILS = ["syedtechnical63@gmail.com"];
 
 // 💰 REVENUE RATES
-const REVENUE_PER_1000_VIEWS = 0.07;
-const REVENUE_PER_1000_HOURS = 0.50;
-const REVENUE_PER_500_SUBS = 1.00;
+const REVENUE_PER_500_SUBS = 1.00;          // $1 per 500 subscribers
+const REVENUE_PER_1000_HOURS = 0.50;        // $0.50 per 1000 watch hours
+const REVENUE_PER_1000_VIEWS = 0.07;        // $0.07 per 1000 views ← NEW
+const REVENUE_PER_VIEW = REVENUE_PER_1000_VIEWS / 1000; // $0.00007
 const MIN_WITHDRAWAL = 1.00;
-
-// ⏱️ WATCH TIME: 1 view = 6 minutes (360 sec)
-// 10 views = 3600 sec = 1 hour
-const WATCH_TIME_PER_VIEW_SECONDS = 360;
 
 // ==================== INDEXEDDB ====================
 const IDB_NAME = 'fortube_videos_db';
@@ -93,6 +88,8 @@ const state = {
   agoraTracks: [],
   liveStartTime: null,
   liveDurationInterval: null,
+  currentWatchStartTime: null,
+  currentWatchingVideoId: null,
   chartInstance: null,
   preferences: {
     language: 'English',
@@ -390,19 +387,11 @@ function isUserAdmin() {
 
 // ============================================================
 // 💰 REVENUE CALCULATION
-// - $0.07 per 1000 views
-// - $0.50 per 1000 watch hours
-// - $1.00 per 500 subscribers
 // ============================================================
 function calculateRevenue(subscribers, watchHours, totalViews) {
-  // 💰 Subscribers: $1 per 500
   const subRevenue = (subscribers / 500) * REVENUE_PER_500_SUBS;
-  
-  // 💰 Watch Time: $0.50 per 1000 hours
   const watchRevenue = (watchHours / 1000) * REVENUE_PER_1000_HOURS;
-  
-  // 💰 Views: $0.07 per 1000 views
-  const viewBonus = (totalViews / 1000) * REVENUE_PER_1000_VIEWS;
+  const viewBonus = totalViews * 0.00001;
   
   return {
     subRevenue: subRevenue,
@@ -417,19 +406,29 @@ function calculateRevenue(subscribers, watchHours, totalViews) {
 // ============================================================
 function renderAnalyticsChart(views, watchHours, subs) {
   const canvas = document.getElementById('analyticsChart');
-  if (!canvas) return;
+  if (!canvas) {
+    console.log('⚠️ Analytics chart canvas not found');
+    return;
+  }
   
   const ctx = canvas.getContext('2d');
   
+  // Destroy existing chart
   if (state.chartInstance) {
     state.chartInstance.destroy();
     state.chartInstance = null;
   }
   
+  // Generate last 7 days data (simulated growth)
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const today = new Date().getDay();
+  
+  // Simulate growth curve (based on current totals)
   const viewsData = generateGrowthData(views, 7);
   const watchData = generateGrowthData(watchHours, 7);
   const subsData = generateGrowthData(subs, 7);
   
+  // Get last 7 days labels
   const labels = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
@@ -437,6 +436,7 @@ function renderAnalyticsChart(views, watchHours, subs) {
     labels.push(d.toLocaleDateString('en', { month: 'short', day: 'numeric' }));
   }
   
+  // Setup canvas dimensions
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   canvas.width = rect.width * dpr;
@@ -449,11 +449,14 @@ function renderAnalyticsChart(views, watchHours, subs) {
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   
+  // Clear canvas
   ctx.clearRect(0, 0, width, height);
   
+  // Find max value for scaling
   const allValues = [...viewsData, ...watchData, ...subsData];
   const maxValue = Math.max(...allValues, 1);
   
+  // Draw grid lines
   ctx.strokeStyle = '#e0e8f0';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
@@ -464,6 +467,7 @@ function renderAnalyticsChart(views, watchHours, subs) {
     ctx.stroke();
   }
   
+  // Draw X-axis labels
   ctx.fillStyle = '#8aa9b8';
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'center';
@@ -472,6 +476,7 @@ function renderAnalyticsChart(views, watchHours, subs) {
     ctx.fillText(label, x, height - 15);
   });
   
+  // Draw Y-axis labels
   ctx.textAlign = 'right';
   for (let i = 0; i <= 4; i++) {
     const value = Math.round(maxValue - (maxValue / 4) * i);
@@ -479,7 +484,9 @@ function renderAnalyticsChart(views, watchHours, subs) {
     ctx.fillText(value.toString(), padding.left - 5, y + 4);
   }
   
+  // Function to draw a line
   function drawLine(data, color, fillColor) {
+    // Draw fill area
     ctx.beginPath();
     ctx.moveTo(padding.left, padding.top + chartHeight);
     data.forEach((value, i) => {
@@ -492,6 +499,7 @@ function renderAnalyticsChart(views, watchHours, subs) {
     ctx.fillStyle = fillColor;
     ctx.fill();
     
+    // Draw line
     ctx.beginPath();
     data.forEach((value, i) => {
       const x = padding.left + (chartWidth / 6) * i;
@@ -503,6 +511,7 @@ function renderAnalyticsChart(views, watchHours, subs) {
     ctx.lineWidth = 2.5;
     ctx.stroke();
     
+    // Draw dots
     data.forEach((value, i) => {
       const x = padding.left + (chartWidth / 6) * i;
       const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
@@ -516,11 +525,13 @@ function renderAnalyticsChart(views, watchHours, subs) {
     });
   }
   
+  // Draw lines (views, watch, subs)
   drawLine(viewsData, '#1e8b4b', 'rgba(30, 139, 75, 0.1)');
   drawLine(watchData, '#1c7aa3', 'rgba(28, 122, 163, 0.1)');
   drawLine(subsData, '#d97706', 'rgba(217, 119, 6, 0.1)');
 }
 
+// Generate growth data for last 7 days
 function generateGrowthData(currentTotal, days) {
   const data = [];
   const increment = currentTotal / (days + 3);
@@ -1050,8 +1061,7 @@ function renderFeed(filterText = '', categoryFilter = null) {
 }
 
 // ============================================================
-// 🔥 WATCH PAGE - View + Watch Time (NEW LOGIC)
-// Har view pe: views +1, watch_time_seconds +360 (6 min)
+// 🔥 WATCH PAGE - View + Watch Time Tracking
 // ============================================================
 async function openWatchPage(vid) {
   if (!vid || !watchPage || !watchBody) return;
@@ -1126,48 +1136,52 @@ async function openWatchPage(vid) {
     </div>
   `;
 
-  // 🔥 NEW LOGIC: Har view pe: views +1, watch_time +360 sec
+  // 🔥 VIEW COUNT + WATCH TIME (sirf doosre users ke liye)
   if (state.user && vid.owner_id !== state.user.id) {
     try {
-      console.log('👁️ Other user watching - incrementing view + watch time');
-      
-      const currentViews = vid.views || 0;
-      const currentWatchTime = vid.watch_time_seconds || 0;
-      
-      const newViews = currentViews + 1;
-      const newWatchTime = currentWatchTime + WATCH_TIME_PER_VIEW_SECONDS;
-      
-      console.log('📊 View:', currentViews, '→', newViews);
-      console.log('⏱️ Watch Time:', currentWatchTime, '→', newWatchTime, 'sec');
-      console.log('📈 Total Hours:', Math.floor(newWatchTime / 3600));
-      
+      console.log('👁️ Other user watching - incrementing view');
+      const newViews = (vid.views || 0) + 1;
       const { error } = await supabaseClient
         .from('videos')
-        .update({ 
-          views: newViews,
-          watch_time_seconds: newWatchTime
-        })
+        .update({ views: newViews })
         .eq('id', vid.id);
       
-      if (error) {
-        console.error('❌ Update error:', error);
-        showToast('⚠️ ' + error.message);
-      } else {
+      if (!error) {
         vid.views = newViews;
-        vid.watch_time_seconds = newWatchTime;
-        
         const viewEl = document.getElementById('watchViewCount');
         if (viewEl) viewEl.textContent = newViews;
-        
-        console.log('✅ SUCCESS!');
-        console.log('   Views:', newViews);
-        console.log('   Watch Time:', Math.floor(newWatchTime / 3600), 'hours', newWatchTime % 3600, 'sec');
+        console.log('✅ View incremented:', newViews);
       }
     } catch (e) {
-      console.error('❌ View + Watch Time failed:', e);
+      console.warn('View increment failed:', e);
+    }
+
+    // 🔥 WATCH TIME TRACKING START
+    state.currentWatchStartTime = Date.now();
+    state.currentWatchingVideoId = vid.id;
+    
+    const videoEl = document.getElementById('watchVideoElement');
+    if (videoEl) {
+      const watchTimeInterval = setInterval(async () => {
+        if (!state.currentWatchStartTime || state.currentWatchingVideoId !== vid.id) {
+          clearInterval(watchTimeInterval);
+          return;
+        }
+        
+        if (videoEl.paused || videoEl.ended || watchPage.classList.contains('open') === false) {
+          return;
+        }
+        
+        await addWatchTime(vid.id, 10);
+      }, 10000);
+      
+      videoEl.addEventListener('ended', async () => {
+        clearInterval(watchTimeInterval);
+        await saveWatchTimeNow(vid.id);
+      });
     }
   } else {
-    console.log('🚫 Own video - skipping');
+    console.log('🚫 Own video - no view/watch-time count');
   }
 
   await loadComments(vid.id);
@@ -1268,6 +1282,38 @@ async function openWatchPage(vid) {
   watchPage.classList.add('open');
 }
 
+// 🔥 WATCH TIME TRACKING FUNCTIONS
+async function addWatchTime(videoId, seconds) {
+  try {
+    const { data: video } = await supabaseClient
+      .from('videos')
+      .select('watch_time_seconds')
+      .eq('id', videoId)
+      .single();
+    
+    if (video) {
+      const newWatchTime = (video.watch_time_seconds || 0) + seconds;
+      await supabaseClient
+        .from('videos')
+        .update({ watch_time_seconds: newWatchTime })
+        .eq('id', videoId);
+      console.log('⏱️ Watch time added:', seconds, 'Total:', newWatchTime);
+    }
+  } catch (e) {
+    console.warn('Watch time add failed:', e);
+  }
+}
+
+async function saveWatchTimeNow(videoId) {
+  if (!state.currentWatchStartTime) return;
+  const elapsed = Math.floor((Date.now() - state.currentWatchStartTime) / 1000);
+  if (elapsed > 0) {
+    await addWatchTime(videoId, elapsed);
+  }
+  state.currentWatchStartTime = null;
+  state.currentWatchingVideoId = null;
+}
+
 async function loadComments(videoId) {
   const list = document.getElementById('commentsList');
   const countEl = document.getElementById('commentCount');
@@ -1303,7 +1349,10 @@ async function loadComments(videoId) {
   }
 }
 
-if (watchBackBtn) watchBackBtn.addEventListener('click', () => {
+if (watchBackBtn) watchBackBtn.addEventListener('click', async () => {
+  if (state.currentWatchingVideoId) {
+    await saveWatchTimeNow(state.currentWatchingVideoId);
+  }
   watchPage.classList.remove('open');
 });
 
@@ -1519,7 +1568,7 @@ if (supportBackBtn) supportBackBtn.addEventListener('click', () => supportPage.c
 const BOT_RESPONSES = {
   'upload': '📹 To upload a video:\n1. Tap the + button\n2. Choose "Upload Video" or "Upload Short"\n3. Record or pick from gallery\n4. Fill in title, description, thumbnail\n5. Tap Publish',
   'go live': '🔴 To go live:\n1. You need 50+ subscribers\n2. Tap + → Go Live\n3. Fill title, description, tags\n4. Tap "Start Live"',
-  'monetization': '💰 Revenue:\n• $0.07 per 1000 views\n• $0.50 per 1000 watch hours\n• $1 per 500 subscribers\n\nMinimum withdrawal: $1.00',
+  'monetization': '💰 Revenue:\n• $1 per 500 subscribers\n• $0.50 per 1000 watch hours\n\nMinimum withdrawal: $1.00',
   'video not playing': '🎬 If video is not playing:\n1. Check internet\n2. Refresh the page\n3. Clear cache in Settings',
   'hello': 'Hi there! 👋 How can I help you today?',
   'hi': 'Hello! 👋 How can I help you today?',
@@ -3155,13 +3204,14 @@ function renderRecentlyWatched() {
 }
 
 // ============================================================
-// 💰 MONETIZATION UI
+// 💰 MONETIZATION UI - With Analytics + Graph
 // ============================================================
 async function updateMonetizationUI() {
   if (!state.channel) return;
 
   const isAdmin = isUserAdmin();
 
+  // Fetch videos - OWNER_ID se
   const { data: videos } = await supabaseClient
     .from('videos')
     .select('views, watch_time_seconds')
@@ -3172,6 +3222,7 @@ async function updateMonetizationUI() {
     .select('views, duration_seconds')
     .eq('channel_id', state.channel.id);
 
+  // Calculate totals
   const videoViews = (videos || []).reduce((sum, v) => sum + (v.views || 0), 0);
   const liveViews = (liveStreams || []).reduce((sum, l) => sum + (l.views || 0), 0);
   const totalViews = videoViews + liveViews;
@@ -3194,9 +3245,11 @@ async function updateMonetizationUI() {
     videosCount: videos?.length || 0
   });
 
+  // Update revenue display
   if (totalRevenue) totalRevenue.textContent = revenue.total.toFixed(2);
   if (qualifiedViewsRevenue) qualifiedViewsRevenue.textContent = totalViews.toLocaleString();
 
+  // 👑 ADMIN: Auto-complete criteria
   if (isAdmin) {
     if (viewsProgress) viewsProgress.textContent = `1000/1000`;
     if (watchProgress) watchProgress.textContent = `4000/4000`;
@@ -3218,6 +3271,7 @@ async function updateMonetizationUI() {
     return;
   }
 
+  // Normal user criteria
   if (viewsProgress) viewsProgress.textContent = `${totalViews}/1000`;
   if (watchProgress) watchProgress.textContent = `${watchHours}/4000`;
   if (subsProgress) subsProgress.textContent = `${subs}/1000`;
@@ -3246,7 +3300,9 @@ async function updateMonetizationUI() {
   updateAnalyticsDisplay(totalViews, watchHours, subs, revenue);
 }
 
+// 🔥 Analytics Display + Graph
 function updateAnalyticsDisplay(views, watchHours, subs, revenue) {
+  // Views analytics
   const analyticsViews = document.getElementById('analyticsViews');
   if (analyticsViews) analyticsViews.textContent = views.toLocaleString();
   
@@ -3265,6 +3321,7 @@ function updateAnalyticsDisplay(views, watchHours, subs, revenue) {
   const totalRevenueBreakdown = document.getElementById('totalRevenueBreakdown');
   if (totalRevenueBreakdown) totalRevenueBreakdown.textContent = '$' + revenue.total.toFixed(2);
   
+  // 🔥 RENDER CHART
   renderAnalyticsChart(views, watchHours, subs);
 }
 
@@ -3568,7 +3625,10 @@ if (alertCloseBtn) alertCloseBtn.addEventListener('click', () => alertPopup.clas
 // ==================== INIT ====================
 checkSession();
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', async () => {
+  if (state.currentWatchingVideoId) {
+    await saveWatchTimeNow(state.currentWatchingVideoId);
+  }
   if (state.agoraClient) {
     try { state.agoraClient.leave(); } catch (e) {}
   }
